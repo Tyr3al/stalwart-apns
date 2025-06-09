@@ -2,7 +2,7 @@
 ARG TARGETPLATFORM
 
 # --- Chef Stage ---
-FROM debian:buster-slim AS chef
+FROM debian:bookworm-slim AS chef
 # Re-declare TARGETPLATFORM for use in this stage
 ARG TARGETPLATFORM
 RUN apt-get update && \
@@ -56,7 +56,7 @@ RUN cargo build --manifest-path=crates/main/Cargo.toml --no-default-features --f
 
 
 # --- Runtime Stage ---
-FROM debian:buster-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 
 # Re-declare TARGETPLATFORM for the final stage
 ARG TARGETPLATFORM
