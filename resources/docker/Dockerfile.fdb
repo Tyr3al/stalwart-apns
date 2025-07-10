@@ -52,7 +52,7 @@ COPY Cargo.lock .
 COPY crates/ crates/
 COPY resources/ resources/
 COPY tests/ tests/
-RUN cargo build --manifest-path=crates/main/Cargo.toml --no-default-features --features "foundationdb,zenoh" --release
+RUN cargo build --manifest-path=crates/main/Cargo.toml --no-default-features --features "foundationdb,nats,enterprise" --release
 
 
 # --- Runtime Stage ---
