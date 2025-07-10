@@ -1,10 +1,16 @@
-FROM debian:buster-slim AS chef 
+# Declare TARGETPLATFORM globally
+ARG TARGETPLATFORM
+
+# --- Chef Stage ---
+FROM debian:bookworm-slim AS chef
+# Re-declare TARGETPLATFORM for use in this stage
+ARG TARGETPLATFORM
 RUN apt-get update && \
     export DEBIAN_FRONTEND=noninteractive && \
     apt-get install -yq \
     build-essential \
     cmake \
-    clang \ 
+    clang \
     curl \
     protobuf-compiler
 ENV RUSTUP_HOME=/opt/rust/rustup \
@@ -14,12 +20,21 @@ RUN curl https://sh.rustup.rs -sSf | \
     sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && \
     env CARGO_HOME=/opt/rust/cargo \
     rustup component add rustfmt
-RUN curl -LO https://github.com/apple/foundationdb/releases/download/7.1.0/foundationdb-clients_7.1.0-1_amd64.deb && \
-    dpkg -i foundationdb-clients_7.1.0-1_amd64.deb
+
+# Modified case statement to check the full platform string
+RUN case ${TARGETPLATFORM} in \
+        "linux/amd64") FDB_ARCH="amd64" ;; \
+        "linux/arm64") FDB_ARCH="aarch64" ;; \
+        *) echo "Unsupported platform: ${TARGETPLATFORM}"; exit 1 ;; \
+    esac && \
+    curl -LO https://github.com/apple/foundationdb/releases/download/7.3.63/foundationdb-clients_7.3.63-1_${FDB_ARCH}.deb && \
+    dpkg -i foundationdb-clients_7.3.63-1_${FDB_ARCH}.deb
+
 RUN env CARGO_HOME=/opt/rust/cargo cargo install cargo-chef && \
     rm -rf /opt/rust/cargo/registry/
 WORKDIR /app
 
+# --- Planner Stage ---
 FROM chef AS planner
 COPY Cargo.toml .
 COPY Cargo.lock .
@@ -28,7 +43,8 @@ COPY resources/ resources/
 COPY tests/ tests/
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder 
+# --- Builder Stage ---
+FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY Cargo.toml .
@@ -36,14 +52,37 @@ COPY Cargo.lock .
 COPY crates/ crates/
 COPY resources/ resources/
 COPY tests/ tests/
-RUN cargo build --manifest-path=crates/main/Cargo.toml --no-default-features --features foundationdb --release
+RUN cargo build --manifest-path=crates/main/Cargo.toml --no-default-features --features "foundationdb,nats,enterprise" --release
 
-FROM debian:buster-slim AS runtime
+
+# --- Runtime Stage ---
+FROM debian:bookworm-slim AS runtime
+
+# Re-declare TARGETPLATFORM for the final stage
+ARG TARGETPLATFORM
 
 COPY --from=builder /app/target/release/stalwart /usr/local/bin/stalwart
-RUN apt-get update -y && apt-get install -yq ca-certificates
-RUN curl -LO https://github.com/apple/foundationdb/releases/download/7.1.0/foundationdb-clients_7.1.0-1_amd64.deb && \
-    dpkg -i foundationdb-clients_7.1.0-1_amd64.deb
+
+# Install dependencies, download the package, and clean up all in one layer
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    \
+    case ${TARGETPLATFORM} in \
+        "linux/amd64") FDB_ARCH="amd64" ;; \
+        "linux/arm64") FDB_ARCH="aarch64" ;; \
+        *) echo "Unsupported platform: ${TARGETPLATFORM}"; exit 1 ;; \
+    esac && \
+    \
+    echo "Downloading FoundationDB for ${FDB_ARCH}..." && \
+    curl -fSLo foundationdb-clients.deb "https://github.com/apple/foundationdb/releases/download/7.3.63/foundationdb-clients_7.3.63-1_${FDB_ARCH}.deb" && \
+    \
+    dpkg -i foundationdb-clients.deb && \
+    rm foundationdb-clients.deb && \
+    \
+    # Clean up build dependencies to keep the image small
+    apt-get purge -y --auto-remove curl && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN useradd stalwart -s /sbin/nologin -M
 RUN mkdir -p /opt/stalwart
 RUN chown stalwart:stalwart /opt/stalwart
