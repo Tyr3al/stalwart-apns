@@ -5,6 +5,9 @@
 !crates
 !tests
 !resources/docker/entrypoint.sh
+!resources/locales/**
+!resources/html-templates/**
+!resources/systemd/**
 
 !Cargo.lock
 !Cargo.toml
