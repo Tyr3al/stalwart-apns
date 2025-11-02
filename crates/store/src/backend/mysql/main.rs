@@ -78,10 +78,8 @@ impl MysqlStore {
             conn_pool: Pool::new(opts),
         };
 
-        if create_tables {
-            if let Err(err) = db.create_tables().await {
-                config.new_build_error(prefix.as_str(), format!("Failed to create tables: {err}"));
-            }
+        if create_tables && let Err(err) = db.create_tables().await {
+            config.new_build_error(prefix.as_str(), format!("Failed to create tables: {err}"));
         }
 
         Some(db)

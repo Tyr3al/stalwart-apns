@@ -51,8 +51,9 @@ pub(crate) async fn check_dnsbl(
     };
 
     for dnsbl in &server.core.spam.dnsbl.servers {
-        if dnsbl.scope == scope && checks < max_checks {
-            if let Some(tag) = is_dnsbl(
+        if dnsbl.scope == scope
+            && checks < max_checks
+            && let Some(tag) = is_dnsbl(
                 server,
                 dnsbl,
                 SpamFilterResolver::new(ctx, resolver, location),
@@ -60,9 +61,8 @@ pub(crate) async fn check_dnsbl(
                 &mut checks,
             )
             .await
-            {
-                ctx.result.add_tag(tag);
-            }
+        {
+            ctx.result.add_tag(tag);
         }
     }
 

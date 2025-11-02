@@ -2,6 +2,158 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.1] - 2025-10-28
+
+If you are upgrading from v0.13.4 and below, this version includes **breaking changes** to the internal directory, calendar and contacts. Please read the [upgrading documentation](https://stalw.art/docs/install/upgrade) for more information on how to upgrade from previous versions.
+
+## Added
+- Autoconfig for CalDAV, CardDAV and WebDAV (#1937)
+
+## Changed
+- HTTP: Remove HTTP STS `preload` directive.
+
+## Fixed
+- Directory: Keep OTP Auth and AppPasswords unless the remote directory provides new ones (#2319)
+- JMAP: Fix `ContactCard/set` and `CalendarEvent/set` destroy methods (#2308).
+
+## [0.14.0] - 2025-10-22
+
+If you are upgrading from v0.13.4 and below, this version includes **breaking changes** to the internal directory, calendar and contacts. Please read the [upgrading documentation](https://stalw.art/docs/install/upgrade) for more information on how to upgrade from previous versions.
+
+## Added
+- JMAP for Calendars ([draft-ietf-jmap-calendars](https://datatracker.ietf.org/doc/draft-ietf-jmap-calendars/)).
+- JMAP for Contacts  ([RFC 9610](https://datatracker.ietf.org/doc/rfc9610/)).
+- JMAP for File Storage ([draft-ietf-jmap-filenode](https://datatracker.ietf.org/doc/draft-ietf-jmap-filenode/)).
+- JMAP Sharing ([RFC 9670](https://datatracker.ietf.org/doc/rfc9670/))
+- CalDAV: support for `supported-calendar-component-set` (#1893)
+- i18n: Greek language support (contributed by @infl00p)
+- i18n: Swedish language support (contributed by @purung)
+
+## Changed
+- **Breaking Database Changes** (migrated automatically on first start):
+  - Internal directory schema changed.
+  - Calendar and Contacts storage schema changed.
+  - Sieve scripts storage schema changed.
+  - Push Subscriptions storage schema changed.
+- Replaced `sieve.untrusted.limits.max-scripts` and `jmap.push.max-total` with `object-quota.*` settings. 
+- Cluster node roles now allow sharding.
+
+
+## Fixed
+- Push Subscription: Clean-up of expired subscriptions and cluster notification of changes (#1248)
+- CalDAV: Per-user CalDAV properties (#2058)
+
+## [0.13.4] - 2025-09-30
+
+If you are upgrading from v0.11.x or v0.12.x, this version includes **breaking changes** to the message queue and MTA configuration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
+
+## Added
+
+## Changed
+- JMAP: Protocol layer rewrite for zero-copy deserialization and architectural improvements.
+
+## Fixed
+- IMAP: Unbounded memory allocation in request parser ([CVE-2025-61600 ](https://github.com/stalwartlabs/stalwart/security/advisories/GHSA-8jqj-qj5p-v5rr)).
+- IMAP: Wrong permission checked for GETACL.
+- JMAP: References to previous method fail when there are no results (#1507).
+- JMAP: Enforce quota checks on `Blob/copy`.
+- JMAP: `Mailbox/get` fails without `accountId` argument (#1936).
+- JMAP: Do not return `invalidProperties` when email update doesn't contain changes (#1139)
+- iTIP: Include date properties in `REPLY` (#2102).
+- OIDC: Do not set `username` field if it is the same as the `email` field.
+- Telemetry: Fix `calculateMetrics` housekeeper task (#2155).
+- Directory: Always use `rsplit` to extract the domain part from email addresses.
+
+## [0.13.3] - 2025-09-10
+
+If you are upgrading from v0.11.x or v0.12.x, this version includes **breaking changes** to the message queue and MTA configuration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
+
+## Added
+- CLI: Health checks (contributed by @Codekloeppler)
+
+## Changed
+- WebDAV: Assisted discovery v2
+
+## Fixed
+- iTIP: Do not send a REPLY when deleting an event that was not accepted.
+- iTIP: Include event details in REPLY messages (#2102).
+- iTIP: Add organizer to iMIP replies if missing to deal with MS Exchange 2010 bug.
+- OIDC: Do not overwrite locally defined aliases (#2065).
+- HTTP: Scan ban should only be triggered by HTTP parse errors.
+- HTTP: Skip scanner fail2ban checks when the proxy client IP can't be parsed (#2121).
+- JMAP: Do not allow roles to be removed from system mailboxes (#1977).
+- JMAP WS: Fix panic when using invalid server url.
+- SMTP: Do no send `EHLO` twice when `STARTTLS` is unavailable (#2050).
+- IMAP: Allow `ENABLE UTF8` in IMAPrev1.
+- IMAP: Include `administer` permission in ACL responses.
+- IMAP: Add owner rights to ACL get responses.
+- IMAP: Do not auto-train Bayes when moving messages from Junk to Trash.
+- IMAP/ManageSieve: Increase maximum quoted argument size (#2039).
+- CalDAV: Limit recurrence expansions in calendar reports ([CVE-2025-59045](https://github.com/stalwartlabs/stalwart/security/advisories/GHSA-xv4r-q6gr-6pfg)).
+- WebDAV: Do not fix percent encoding on WebDAV FS (#2036).
+
+## [0.13.2] - 2025-07-28
+
+If you are upgrading from v0.11.x or v0.12.x, this version includes **breaking changes** to the message queue and MTA configuration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
+
+## Added
+- ACME: DeSEC cloud DNS provider support (contributed by @Tyr3al).
+- ACME: OVH cloud DNS provider support (contributed by @srachner).
+- CalDAV Scheduling: Catalan language support (contributed by @jolupa) (#1873).
+- MTA: Allow to send e-mails as group, while member of that group (#485).
+- OIDC: Allow local access tokens to be used with third-party OIDC backends (#1311 stalwartlabs/webadmin#52).
+
+## Changed
+- IMAP: Return `OK` when moving/copying non-existent messages (#670).
+- IMAP: Copy flags when copying/moving messages between accounts.
+
+## Fixed
+- MTA: Do not convert e-mail local parts to lowercase (#1916).
+- Sieve: `fileinto` should override spam filter (#1917).
+- JMAP: Incorrect `accountId` used in email set and import methods (#1777).
+- WebDAV: Always return `MULTISTATUS` when calendar-query yields no results.
+- LDAP: Only set account name if not returned in LDAP query (#1471).
+- Enterprise: Invalidate logo cache when changes are made (#1856).
+- Enterprise: Fix tenant quota update API.
+
+## [0.13.1] - 2025-07-16
+
+If you are upgrading from v0.11.x or v0.12.x, this version includes **breaking changes** to the message queue and MTA configuration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
+
+## Added
+- ACME: DigitalOcean cloud DNS provider support (#1667).
+
+## Changed
+
+## Fixed
+- Migration: Old queue events not deleted causing high CPU usage in some deployments (#1833).
+- MTA: `mta-sts` setting parsing issue (#1830).
+- JMAP: `sortOrder` should not be null (#1831).
+- Allow invalid TOML when parsing database settings (#1822).
+
+## [0.13.0] - 2025-07-15
+
+If you are upgrading from v0.11.x or v0.12.x, this version includes **breaking changes** to the message queue and MTA configuration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.
+
+## Added
+- MTA queue enhancements (#1246 #1035 #457).
+- Danish locale support (contributed by @Fadil2k) (#1772).
+- DKIM support for `stalwart-cli` (contributed by @rmsc) (#1804).
+
+## Changed
+- Invalidate access token caches in a cluster using pub/sub (#1741).
+- Allow updating secrets for all directory types.
+
+## Fixed
+- WebDAV: Return all shared resources in `calendar-home-set` and `addressbook-home-set` (#1796).
+- WebDAV ACL: Fix write permission and `multiget` reports (#1768).
+- CalDAV Scheduling: Include `DTSTART`/`DTEND` properties in iMIP `CANCEL` messages (#1775).
+- HTTP: Do not include `WWW-Authenticate` headers in API responses (#1795).
+- API: Allow API keys to be used with external directories (#1815).
+- IMAP: Fix issue creating subfolders under INBOX for group shared folder (#1817).
+- IMAP: Custom Name for Shared Folders ignored (#1620).
+- LDAP: `local` placeholder should return username when its not an email address (#1784).
+
 ## [0.12.5] - 2025-06-25
 
 If you are upgrading from v0.11.x, this version includes **breaking changes** to the database layout and requires a migration. Please read the [UPGRADING.md](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING.md) file for more information on how to upgrade from previous versions.

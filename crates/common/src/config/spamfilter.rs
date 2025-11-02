@@ -199,11 +199,7 @@ impl SpamFilterConfig {
 impl SpamFilterRules {
     pub fn parse(config: &mut Config) -> SpamFilterRules {
         let mut rules = vec![];
-        for id in config
-            .sub_keys("spam-filter.rule", ".scope")
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("spam-filter.rule", ".scope") {
             if let Some(rule) = SpamFilterRule::parse(config, id) {
                 rules.push(rule);
             }
@@ -266,11 +262,7 @@ impl SpamFilterRule {
 impl DnsBlConfig {
     pub fn parse(config: &mut Config) -> Self {
         let mut servers = vec![];
-        for id in config
-            .sub_keys("spam-filter.dnsbl.server", ".scope")
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("spam-filter.dnsbl.server", ".scope") {
             if let Some(server) = DnsBlServer::parse(config, id) {
                 servers.push(server);
             }
@@ -339,12 +331,11 @@ impl SpamFilterHeaderConfig {
             if config
                 .property_or_default(("spam-filter.header", typ, "enable"), "true")
                 .unwrap_or(true)
+                && let Some(value) = config.value(("spam-filter.header", typ, "name"))
             {
-                if let Some(value) = config.value(("spam-filter.header", typ, "name")) {
-                    let value = value.trim();
-                    if !value.is_empty() {
-                        *var = value.to_string().into();
-                    }
+                let value = value.trim();
+                if !value.is_empty() {
+                    *var = value.to_string().into();
                 }
             }
         }

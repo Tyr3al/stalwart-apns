@@ -8,16 +8,13 @@ use compact_str::ToCompactString;
 
 use crate::{
     Command,
-    protocol::{
-        ProtocolVersion,
-        list::{self, SelectionOption},
-    },
+    protocol::list::{self, SelectionOption},
     receiver::{Request, bad},
     utf7::utf7_maybe_decode,
 };
 
 impl Request<Command> {
-    pub fn parse_lsub(self) -> trc::Result<list::Arguments> {
+    pub fn parse_lsub(self, is_utf8: bool) -> trc::Result<list::Arguments> {
         if self.tokens.len() > 1 {
             let mut tokens = self.tokens.into_iter();
 
@@ -33,7 +30,7 @@ impl Request<Command> {
                         .ok_or_else(|| bad(self.tag.to_compact_string(), "Missing mailbox name."))?
                         .unwrap_string()
                         .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                    ProtocolVersion::Rev1,
+                    is_utf8,
                 )],
                 selection_options: vec![SelectionOption::Subscribed],
                 return_options: vec![],
@@ -82,7 +79,7 @@ mod tests {
                 receiver
                     .parse(&mut command.as_bytes().iter())
                     .unwrap()
-                    .parse_lsub()
+                    .parse_lsub(false)
                     .unwrap(),
                 arguments
             );

@@ -40,8 +40,12 @@ pub enum TelemetrySubscriberType {
     Webhook(WebhookTracer),
     #[cfg(unix)]
     JournalTracer(crate::telemetry::tracers::journald::Subscriber),
+    // SPDX-SnippetBegin
+    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+    // SPDX-License-Identifier: LicenseRef-SEL
     #[cfg(feature = "enterprise")]
     StoreTracer(StoreTracer),
+    // SPDX-SnippetEnd
 }
 
 #[derive(Debug)]
@@ -88,11 +92,15 @@ pub struct WebhookTracer {
     pub headers: HeaderMap,
 }
 
+// SPDX-SnippetBegin
+// SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+// SPDX-License-Identifier: LicenseRef-SEL
 #[derive(Debug)]
 #[cfg(feature = "enterprise")]
 pub struct StoreTracer {
     pub store: store::Store,
 }
+// SPDX-SnippetEnd
 
 #[derive(Debug)]
 pub enum RotationStrategy {
@@ -163,23 +171,17 @@ impl Tracers {
         {
             if let Some(event_type) =
                 config.try_parse_value::<EventType>(("tracing.level", &event_name), &event_name)
-            {
-                if let Some(level) =
+                && let Some(level) =
                     config.property_require::<Level>(("tracing.level", &event_name))
-                {
-                    custom_levels.insert(event_type, level);
-                }
+            {
+                custom_levels.insert(event_type, level);
             }
         }
 
         // Parse tracers
         let mut tracers: Vec<TelemetrySubscriber> = Vec::new();
         let mut global_interests = Interests::default();
-        for tracer_id in config
-            .sub_keys("tracer", ".type")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for tracer_id in config.sub_keys("tracer", ".type") {
             let id = tracer_id.as_str();
 
             // Skip disabled tracers
@@ -481,8 +483,12 @@ impl Tracers {
                 TelemetrySubscriberType::JournalTracer(_) => {
                     EventType::Telemetry(TelemetryEvent::JournalError).into()
                 }
+                // SPDX-SnippetBegin
+                // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+                // SPDX-License-Identifier: LicenseRef-SEL
                 #[cfg(feature = "enterprise")]
                 TelemetrySubscriberType::StoreTracer(_) => None,
+                // SPDX-SnippetEnd
             };
 
             // Parse disabled events
@@ -513,44 +519,44 @@ impl Tracers {
             }
         }
 
+        // SPDX-SnippetBegin
+        // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+        // SPDX-License-Identifier: LicenseRef-SEL
+
         // Parse tracing history
         #[cfg(feature = "enterprise")]
         {
             if config
                 .property_or_default("tracing.history.enable", "false")
                 .unwrap_or(false)
+                && let Some(store_id) = config.value_require("tracing.history.store")
             {
-                if let Some(store_id) = config.value_require("tracing.history.store") {
-                    if let Some(store) = stores.stores.get(store_id) {
-                        let mut tracer = TelemetrySubscriber {
-                            id: "history".to_string(),
-                            interests: Default::default(),
-                            lossy: false,
-                            typ: TelemetrySubscriberType::StoreTracer(StoreTracer {
-                                store: store.clone(),
-                            }),
-                        };
+                if let Some(store) = stores.stores.get(store_id) {
+                    let mut tracer = TelemetrySubscriber {
+                        id: "history".to_string(),
+                        interests: Default::default(),
+                        lossy: false,
+                        typ: TelemetrySubscriberType::StoreTracer(StoreTracer {
+                            store: store.clone(),
+                        }),
+                    };
 
-                        for event_type in StoreTracer::default_events() {
-                            tracer.interests.set(event_type);
-                            global_interests.set(event_type);
-                        }
-
-                        tracers.push(tracer);
-                    } else {
-                        let err = format!("Store {store_id} not found");
-                        config.new_build_error("tracing.history.store", err);
+                    for event_type in StoreTracer::default_events() {
+                        tracer.interests.set(event_type);
+                        global_interests.set(event_type);
                     }
+
+                    tracers.push(tracer);
+                } else {
+                    let err = format!("Store {store_id} not found");
+                    config.new_build_error("tracing.history.store", err);
                 }
             }
         }
+        // SPDX-SnippetEnd
 
         // Parse webhooks
-        for id in config
-            .sub_keys("webhook", ".url")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("webhook", ".url") {
             if let Some(webhook) = parse_webhook(config, &id, &mut global_interests) {
                 tracers.push(webhook);
             }
@@ -599,6 +605,7 @@ impl Metrics {
 
         // Obtain log path
         for tracer_id in config.sub_keys("tracer", ".type") {
+            let tracer_id = tracer_id.as_str();
             if config
                 .value(("tracer", tracer_id, "enable"))
                 .unwrap_or("true")
@@ -607,14 +614,12 @@ impl Metrics {
                     .value(("tracer", tracer_id, "type"))
                     .unwrap_or_default()
                     == "log"
-            {
-                if let Some(path) = config
+                && let Some(path) = config
                     .value(("tracer", tracer_id, "path"))
                     .map(|s| s.to_string())
-                {
-                    metrics.log_path = Some(path);
-                    break;
-                }
+            {
+                metrics.log_path = Some(path);
+                break;
             }
         }
 

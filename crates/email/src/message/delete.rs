@@ -8,8 +8,6 @@ use super::metadata::MessageData;
 use crate::{cache::MessageCacheFetch, mailbox::*, message::metadata::MessageMetadata};
 use common::{KV_LOCK_PURGE_ACCOUNT, Server, storage::index::ObjectIndexBuilder};
 use groupware::calendar::storage::ItipAutoExpunge;
-use jmap_proto::types::collection::VanishedCollection;
-use jmap_proto::types::{collection::Collection, property::Property};
 use std::future::Future;
 use store::rand::prelude::SliceRandom;
 use store::write::key::DeserializeBigEndian;
@@ -21,7 +19,10 @@ use store::{
 };
 use store::{IndexKey, IterateParams, SerializeInfallible, U32_LEN};
 use trc::AddContext;
-use utils::BlobHash;
+#[cfg(feature = "enterprise")]
+use types::blob_hash::BlobHash;
+use types::collection::{Collection, VanishedCollection};
+use types::field::EmailField;
 
 pub trait EmailDeletion: Sync + Send {
     fn emails_tombstone(
@@ -31,7 +32,7 @@ pub trait EmailDeletion: Sync + Send {
         document_ids: RoaringBitmap,
     ) -> impl Future<Output = trc::Result<RoaringBitmap>> + Send;
 
-    fn purge_accounts(&self) -> impl Future<Output = ()> + Send;
+    fn purge_accounts(&self, use_roles: bool) -> impl Future<Output = ()> + Send;
 
     fn purge_account(&self, account_id: u32) -> impl Future<Output = ()> + Send;
 
@@ -78,7 +79,7 @@ impl EmailDeletion for Server {
                     .update_document(document_id)
                     .custom(ObjectIndexBuilder::<_, ()>::new().with_current(metadata))
                     .caused_by(trc::location!())?
-                    .tag(Property::MailboxIds, TagValue::Id(TOMBSTONE_ID))
+                    .tag(EmailField::MailboxIds, TagValue::Id(TOMBSTONE_ID))
                     .commit_point();
 
                 deleted_ids.insert(document_id);
@@ -98,10 +99,21 @@ impl EmailDeletion for Server {
         Ok(not_destroyed)
     }
 
-    async fn purge_accounts(&self) {
+    async fn purge_accounts(&self, use_roles: bool) {
         if let Ok(Some(account_ids)) = self.get_document_ids(u32::MAX, Collection::Principal).await
         {
-            let mut account_ids: Vec<u32> = account_ids.into_iter().collect();
+            let mut account_ids: Vec<u32> = account_ids
+                .into_iter()
+                .filter(|id| {
+                    !use_roles
+                        || self
+                            .core
+                            .network
+                            .roles
+                            .purge_accounts
+                            .is_enabled_for_account(*id)
+                })
+                .collect();
 
             // Shuffle account ids
             account_ids.shuffle(&mut store::rand::rng());
@@ -136,23 +148,23 @@ impl EmailDeletion for Server {
         }
 
         // Auto-expunge deleted and junk messages
-        if let Some(hold_period) = self.core.jmap.mail_autoexpunge_after {
-            if let Err(err) = self.emails_auto_expunge(account_id, hold_period).await {
-                trc::error!(
-                    err.details("Failed to auto-expunge e-mail messages.")
-                        .account_id(account_id)
-                );
-            }
+        if let Some(hold_period) = self.core.jmap.mail_autoexpunge_after
+            && let Err(err) = self.emails_auto_expunge(account_id, hold_period).await
+        {
+            trc::error!(
+                err.details("Failed to auto-expunge e-mail messages.")
+                    .account_id(account_id)
+            );
         }
 
         // Auto-expunge iMIP messages
-        if let Some(hold_period) = self.core.groupware.itip_inbox_auto_expunge {
-            if let Err(err) = self.itip_auto_expunge(account_id, hold_period).await {
-                trc::error!(
-                    err.details("Failed to auto-expunge iTIP messages.")
-                        .account_id(account_id)
-                );
-            }
+        if let Some(hold_period) = self.core.groupware.itip_inbox_auto_expunge
+            && let Err(err) = self.itip_auto_expunge(account_id, hold_period).await
+        {
+            trc::error!(
+                err.details("Failed to auto-expunge iTIP messages.")
+                    .account_id(account_id)
+            );
         }
 
         // Purge tombstoned messages
@@ -164,13 +176,18 @@ impl EmailDeletion for Server {
         }
 
         // Purge changelogs
-        if let Some(history) = self.core.jmap.changes_max_history {
-            if let Err(err) = self.delete_changes(account_id, history).await {
-                trc::error!(
-                    err.details("Failed to purge changes.")
-                        .account_id(account_id)
-                );
-            }
+        if let Err(err) = self
+            .delete_changes(
+                account_id,
+                self.core.jmap.changes_max_history,
+                self.core.jmap.share_notification_max_history,
+            )
+            .await
+        {
+            trc::error!(
+                err.details("Failed to purge changes.")
+                    .account_id(account_id)
+            );
         }
 
         // Delete lock
@@ -211,14 +228,14 @@ impl EmailDeletion for Server {
                         account_id,
                         collection: Collection::Email.into(),
                         document_id: 0,
-                        field: Property::ReceivedAt.into(),
+                        field: EmailField::ReceivedAt.into(),
                         key: 0u64.serialize(),
                     },
                     IndexKey {
                         account_id,
                         collection: Collection::Email.into(),
                         document_id: u32::MAX,
-                        field: Property::ReceivedAt.into(),
+                        field: EmailField::ReceivedAt.into(),
                         key: now().saturating_sub(hold_period).serialize(),
                     },
                 )
@@ -269,7 +286,7 @@ impl EmailDeletion for Server {
                 account_id,
                 collection: Collection::Email.into(),
                 class: BitmapClass::Tag {
-                    field: Property::MailboxIds.into(),
+                    field: EmailField::MailboxIds.into(),
                     value: TagValue::Id(TOMBSTONE_ID),
                 },
                 document_id: 0,
@@ -291,7 +308,7 @@ impl EmailDeletion for Server {
         self.core
             .storage
             .fts
-            .remove(account_id, Collection::Email.into(), &tombstoned_ids)
+            .remove(account_id, Collection::Email, &tombstoned_ids)
             .await?;
 
         // Obtain tenant id
@@ -310,8 +327,8 @@ impl EmailDeletion for Server {
             batch
                 .with_collection(Collection::Email)
                 .delete_document(document_id)
-                .clear(Property::Value)
-                .untag(Property::MailboxIds, TagValue::Id(TOMBSTONE_ID));
+                .clear(EmailField::Archive)
+                .untag(EmailField::MailboxIds, TagValue::Id(TOMBSTONE_ID));
 
             // Remove message metadata
             if let Some(metadata_) = self
@@ -322,7 +339,7 @@ impl EmailDeletion for Server {
                     account_id,
                     collection: Collection::Email.into(),
                     document_id,
-                    class: ValueClass::Property(Property::BodyStructure.into()),
+                    class: ValueClass::Property(EmailField::Metadata.into()),
                 })
                 .await?
             {

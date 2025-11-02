@@ -105,7 +105,7 @@ mod tests {
                         }],
                     }],
                 },
-                concat!("* QUOTA \"INBOX\" (STORAGE 1024 1048576)\r\n"),
+                "* QUOTA \"INBOX\" (STORAGE 1024 1048576)\r\n",
             ),
             (
                 super::Response {

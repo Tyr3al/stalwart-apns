@@ -13,9 +13,10 @@ pub mod property;
 pub mod propstat;
 pub mod schedule;
 
+use types::dead_property::{DeadProperty, DeadPropertyTag};
+
 use crate::schema::{
     property::{Comp, ResourceType, SupportedCollation},
-    request::{DeadProperty, DeadPropertyTag},
     response::{Href, List, Location, ResponseDescription, Status, SyncToken},
     Namespaces,
 };
@@ -140,7 +141,7 @@ impl Display for SyncToken {
 
 impl Display for Comp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<A:comp name=\"{}\">", self.0.as_str())
+        write!(f, "<A:comp name=\"{}\"/>", self.0.as_str())
     }
 }
 
@@ -168,7 +169,11 @@ impl Display for SupportedCollation {
     }
 }
 
-impl Display for DeadProperty {
+pub trait DeadPropertyFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+}
+
+impl DeadPropertyFormat for DeadProperty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut last_tag = "";
 
@@ -203,6 +208,7 @@ mod tests {
     use calcard::{icalendar::ICalendar, vcard::VCard};
     use hyper::StatusCode;
     use mail_parser::DateTime;
+    use types::dead_property::{DeadElementTag, DeadProperty, DeadPropertyTag};
 
     use crate::{
         parser::{tokenizer::Tokenizer, Token},
@@ -212,7 +218,7 @@ mod tests {
                 ActiveLock, CalDavProperty, CardDavProperty, DavValue, LockScope, Privilege,
                 ResourceType, Rfc1123DateTime, SupportedLock, WebDavProperty,
             },
-            request::{DavPropertyValue, DeadElementTag, DeadProperty, DeadPropertyTag},
+            request::DavPropertyValue,
             response::{
                 Ace, AclRestrictions, BaseCondition, ErrorResponse, GrantDeny, Href, List,
                 MkColResponse, MultiStatus, Principal, PrincipalSearchProperty,
@@ -671,30 +677,37 @@ END:VCARD
                 std::fs::read_to_string(format!("resources/responses/{:03}.xml", num + 1)).unwrap();
             let mut output_token = Tokenizer::new(test.as_bytes());
             let mut expected_token = Tokenizer::new(xml.as_bytes());
+            let mut output_tokens = Vec::new();
+            let mut expected_tokens = Vec::new();
 
-            loop {
-                let mut output = output_token.token().unwrap();
-                let mut expected = expected_token.token().unwrap();
-
-                for token in [&mut output, &mut expected] {
-                    if let Token::Bytes(text) = token {
-                        // Remove '\r'
-                        *text = text
-                            .iter()
-                            .copied()
-                            .filter(|&c| c != b'\r')
-                            .collect::<Vec<_>>()
-                            .into();
+            for (tokens, tokenizer) in [
+                (&mut output_tokens, &mut output_token),
+                (&mut expected_tokens, &mut expected_token),
+            ] {
+                while let Ok(token) = tokenizer.token() {
+                    if token == Token::Eof {
+                        break;
+                    }
+                    match (tokens.last_mut(), token) {
+                        (Some(Token::Text(text)), Token::Text(new_text)) => {
+                            *text = format!("{}{}", text, new_text).into();
+                        }
+                        (_, element) => {
+                            tokens.push(element.into_owned());
+                        }
                     }
                 }
+            }
 
+            assert!(!output_tokens.is_empty());
+            assert!(!expected_tokens.is_empty());
+            assert_eq!(output_tokens.len(), expected_tokens.len());
+
+            for (output, expected) in output_tokens.iter().zip(expected_tokens.iter()) {
                 if output != expected {
                     eprintln!("{test}");
                 }
                 assert_eq!(output, expected, "failed for {:03}.xml", num + 1);
-                if output == Token::Eof {
-                    break;
-                }
             }
         }
     }

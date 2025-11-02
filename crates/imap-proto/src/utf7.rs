@@ -7,8 +7,6 @@
 // Ported from https://github.com/jstedfast/MailKit/blob/master/MailKit/Net/Imap/ImapEncoding.cs
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 
-use crate::protocol::ProtocolVersion;
-
 static UTF_7_RANK: &[u8] = &[
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
     255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
@@ -122,8 +120,8 @@ pub fn utf7_encode(text: &str) -> String {
 }
 
 #[inline(always)]
-pub fn utf7_maybe_decode(text: String, version: ProtocolVersion) -> String {
-    if version.is_rev2() {
+pub fn utf7_maybe_decode(text: String, is_utf8: bool) -> String {
+    if is_utf8 {
         text
     } else {
         utf7_decode(&text).unwrap_or(text)

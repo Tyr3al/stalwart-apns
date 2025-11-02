@@ -170,7 +170,7 @@ async fn init_imap_tests(store_id: &str, delete_if_exists: bool) -> IMAPTest {
     let cache = Caches::parse(&mut config);
 
     let store = core.storage.data.clone();
-    let (ipc, mut ipc_rxs) = build_ipc(&mut config, false);
+    let (ipc, mut ipc_rxs) = build_ipc(false);
     let inner = Arc::new(Inner {
         shared_core: core.into_shared(),
         data,
@@ -504,33 +504,31 @@ impl AssertResult for Vec<String> {
     }
 
     fn into_response_code(self) -> String {
-        if let Some((_, code)) = self.last().unwrap().split_once('[') {
-            if let Some((code, _)) = code.split_once(']') {
-                return code.to_string();
-            }
+        if let Some((_, code)) = self.last().unwrap().split_once('[')
+            && let Some((code, _)) = code.split_once(']')
+        {
+            return code.to_string();
         }
         panic!("No response code found in {:?}", self.last().unwrap());
     }
 
     fn into_append_uid(self) -> String {
-        if let Some((_, code)) = self.last().unwrap().split_once("[APPENDUID ") {
-            if let Some((code, _)) = code.split_once(']') {
-                if let Some((_, uid)) = code.split_once(' ') {
-                    return uid.to_string();
-                }
-            }
+        if let Some((_, code)) = self.last().unwrap().split_once("[APPENDUID ")
+            && let Some((code, _)) = code.split_once(']')
+            && let Some((_, uid)) = code.split_once(' ')
+        {
+            return uid.to_string();
         }
         panic!("No APPENDUID found in {:?}", self.last().unwrap());
     }
 
     fn into_copy_uid(self) -> String {
         for line in &self {
-            if let Some((_, code)) = line.split_once("[COPYUID ") {
-                if let Some((code, _)) = code.split_once(']') {
-                    if let Some((_, uid)) = code.rsplit_once(' ') {
-                        return uid.to_string();
-                    }
-                }
+            if let Some((_, code)) = line.split_once("[COPYUID ")
+                && let Some((code, _)) = code.split_once(']')
+                && let Some((_, uid)) = code.rsplit_once(' ')
+            {
+                return uid.to_string();
             }
         }
         panic!("No COPYUID found in {:?}", self);
@@ -678,17 +676,18 @@ hash = 64
 [resolver]
 type = "system"
 
-[queue.outbound]
-next-hop = [ { if = "rcpt_domain == 'example.com'", then = "'local'" }, 
+[queue.strategy]
+route = [ { if = "rcpt_domain == 'example.com'", then = "'local'" }, 
              { if = "contains(['remote.org', 'foobar.com', 'test.com', 'other_domain.com'], rcpt_domain)", then = "'mock-smtp'" },
-             { else = false } ]
+             { else = "'mx'" } ]
 
-[remote."mock-smtp"]
+[queue.route."mock-smtp"]
+type = "relay"
 address = "localhost"
 port = 9999
 protocol = "smtp"
 
-[remote."mock-smtp".tls]
+[queue.route."mock-smtp".tls]
 enable = false
 allow-invalid-certs = true
 

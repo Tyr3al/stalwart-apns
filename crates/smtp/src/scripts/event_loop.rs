@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::{borrow::Cow, future::Future, sync::Arc, time::Instant};
-
-use common::{Server, scripts::plugins::PluginContext};
-
+use crate::{
+    inbound::DkimSign,
+    queue::{MessageSource, quota::HasQueueQuota, spool::SmtpSpool},
+};
+use common::{Server, config::smtp::queue::QueueExpiry, scripts::plugins::PluginContext};
 use mail_auth::common::headers::HeaderWriter;
 use mail_parser::{Encoding, Message, MessagePart, PartType};
 use sieve::{
@@ -18,12 +19,8 @@ use smtp_proto::{
     MAIL_BY_TRACE, MAIL_RET_FULL, MAIL_RET_HDRS, RCPT_NOTIFY_DELAY, RCPT_NOTIFY_FAILURE,
     RCPT_NOTIFY_NEVER, RCPT_NOTIFY_SUCCESS,
 };
+use std::{borrow::Cow, future::Future, sync::Arc, time::Instant};
 use trc::SieveEvent;
-
-use crate::{
-    inbound::DkimSign,
-    queue::{DomainPart, MessageSource, quota::HasQueueQuota, spool::SmtpSpool},
-};
 
 use super::{ScriptModification, ScriptParameters, ScriptResult};
 
@@ -161,14 +158,7 @@ impl RunScript for Server {
                         message_id,
                     } => {
                         // Build message
-                        let return_path_lcase = params.return_path.to_lowercase();
-                        let return_path_domain = return_path_lcase.domain_part().to_string();
-                        let mut message = self.new_message(
-                            params.return_path.clone(),
-                            return_path_lcase,
-                            return_path_domain,
-                            session_id,
-                        );
+                        let mut message = self.new_message(params.return_path.as_str(), session_id);
                         match recipient {
                             Recipient::Address(rcpt) => {
                                 message.add_recipient(rcpt, self).await;
@@ -207,7 +197,7 @@ impl RunScript for Server {
                             Notify::Default => (),
                         }
                         if flags > 0 {
-                            for rcpt in &mut message.recipients {
+                            for rcpt in &mut message.message.recipients {
                                 rcpt.flags |= flags;
                             }
                         }
@@ -220,16 +210,16 @@ impl RunScript for Server {
                                 trace,
                             } => {
                                 if trace {
-                                    message.flags |= MAIL_BY_TRACE;
+                                    message.message.flags |= MAIL_BY_TRACE;
                                 }
                                 match mode {
                                     ByMode::Notify => {
-                                        for domain in &mut message.domains {
+                                        for domain in &mut message.message.recipients {
                                             domain.notify.due += rlimit;
                                         }
                                     }
                                     ByMode::Return => {
-                                        for domain in &mut message.domains {
+                                        for domain in &mut message.message.recipients {
                                             domain.notify.due += rlimit;
                                         }
                                     }
@@ -242,17 +232,21 @@ impl RunScript for Server {
                                 trace,
                             } => {
                                 if trace {
-                                    message.flags |= MAIL_BY_TRACE;
+                                    message.message.flags |= MAIL_BY_TRACE;
                                 }
                                 match mode {
                                     ByMode::Notify => {
-                                        for domain in &mut message.domains {
+                                        for domain in &mut message.message.recipients {
                                             domain.notify.due = alimit as u64;
                                         }
                                     }
                                     ByMode::Return => {
-                                        for domain in &mut message.domains {
-                                            domain.expires = alimit as u64;
+                                        let expires =
+                                            (alimit as u64).saturating_sub(message.message.created);
+                                        if expires > 0 {
+                                            for domain in &mut message.message.recipients {
+                                                domain.expires = QueueExpiry::Ttl(expires);
+                                            }
                                         }
                                     }
                                     ByMode::Default => (),
@@ -264,10 +258,10 @@ impl RunScript for Server {
                         // Set ret
                         match return_of_content {
                             Ret::Full => {
-                                message.flags |= MAIL_RET_FULL;
+                                message.message.flags |= MAIL_RET_FULL;
                             }
                             Ret::Hdrs => {
-                                message.flags |= MAIL_RET_HDRS;
+                                message.message.flags |= MAIL_RET_HDRS;
                             }
                             Ret::Default => (),
                         }
@@ -327,11 +321,12 @@ impl RunScript for Server {
                                     Sieve(SieveEvent::QuotaExceeded),
                                     SpanId = session_id,
                                     Id = script_id.clone(),
-                                    From = message.return_path_lcase,
+                                    From = message.message.return_path,
                                     To = message
+                                        .message
                                         .recipients
                                         .into_iter()
-                                        .map(|r| trc::Value::from(r.address_lcase))
+                                        .map(|r| trc::Value::from(r.address().to_string()))
                                         .collect::<Vec<_>>(),
                                 );
                             }

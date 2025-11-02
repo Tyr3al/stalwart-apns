@@ -7,24 +7,20 @@
 use trc::AddContext;
 
 use crate::{
-    Directory, DirectoryInner, Principal, QueryBy,
+    Directory, DirectoryInner, Principal, QueryParams,
     backend::{RcptType, internal::lookup::DirectoryStore},
 };
 
 impl Directory {
-    pub async fn query(
-        &self,
-        by: QueryBy<'_>,
-        return_member_of: bool,
-    ) -> trc::Result<Option<Principal>> {
+    pub async fn query(&self, by: QueryParams<'_>) -> trc::Result<Option<Principal>> {
         match &self.store {
-            DirectoryInner::Internal(store) => store.query(by, return_member_of).await,
-            DirectoryInner::Ldap(store) => store.query(by, return_member_of).await,
-            DirectoryInner::Sql(store) => store.query(by, return_member_of).await,
-            DirectoryInner::Imap(store) => store.query(by).await,
-            DirectoryInner::Smtp(store) => store.query(by).await,
+            DirectoryInner::Internal(store) => store.query(by).await,
+            DirectoryInner::Ldap(store) => store.query(by).await,
+            DirectoryInner::Sql(store) => store.query(by).await,
+            DirectoryInner::Imap(store) => store.query(by.by).await,
+            DirectoryInner::Smtp(store) => store.query(by.by).await,
             DirectoryInner::Memory(store) => store.query(by).await,
-            DirectoryInner::OpenId(store) => store.query(by, return_member_of).await,
+            DirectoryInner::OpenId(store) => store.query(by).await,
         }
         .caused_by(trc::location!())
     }
@@ -44,10 +40,10 @@ impl Directory {
 
     pub async fn is_local_domain(&self, domain: &str) -> trc::Result<bool> {
         // Check cache
-        if let Some(cache) = &self.cache {
-            if let Some(result) = cache.get_domain(domain) {
-                return Ok(result);
-            }
+        if let Some(cache) = &self.cache
+            && let Some(result) = cache.get_domain(domain)
+        {
+            return Ok(result);
         }
 
         let result = match &self.store {
@@ -71,10 +67,10 @@ impl Directory {
 
     pub async fn rcpt(&self, email: &str) -> trc::Result<RcptType> {
         // Check cache
-        if let Some(cache) = &self.cache {
-            if let Some(result) = cache.get_rcpt(email) {
-                return Ok(result);
-            }
+        if let Some(cache) = &self.cache
+            && let Some(result) = cache.get_rcpt(email)
+        {
+            return Ok(result);
         }
 
         let result = match &self.store {

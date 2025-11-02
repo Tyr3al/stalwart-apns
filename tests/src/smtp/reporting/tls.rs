@@ -112,10 +112,10 @@ async fn report_tls() {
     // Expect report
     let message = qr.expect_message().await;
     assert_eq!(
-        message.recipients.last().unwrap().address,
+        message.message.recipients.last().unwrap().address(),
         "reports@foobar.org"
     );
-    assert_eq!(message.return_path, "reports@example.org");
+    assert_eq!(message.message.return_path, "reports@example.org");
     message
         .read_lines(qr)
         .await

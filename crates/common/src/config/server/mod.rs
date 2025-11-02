@@ -45,7 +45,7 @@ pub struct TcpListener {
     pub nodelay: bool,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, Default, Serialize, Deserialize)]
 pub enum ServerProtocol {
     #[default]
     Smtp,

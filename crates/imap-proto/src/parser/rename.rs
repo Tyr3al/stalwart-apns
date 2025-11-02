@@ -8,13 +8,13 @@ use compact_str::ToCompactString;
 
 use crate::{
     Command,
-    protocol::{ProtocolVersion, rename},
+    protocol::rename,
     receiver::{Request, bad},
     utf7::utf7_maybe_decode,
 };
 
 impl Request<Command> {
-    pub fn parse_rename(self, version: ProtocolVersion) -> trc::Result<rename::Arguments> {
+    pub fn parse_rename(self, is_utf8: bool) -> trc::Result<rename::Arguments> {
         match self.tokens.len() {
             2 => {
                 let mut tokens = self.tokens.into_iter();
@@ -25,7 +25,7 @@ impl Request<Command> {
                             .unwrap()
                             .unwrap_string()
                             .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                        version,
+                        is_utf8,
                     ),
                     new_mailbox_name: utf7_maybe_decode(
                         tokens
@@ -33,7 +33,7 @@ impl Request<Command> {
                             .unwrap()
                             .unwrap_string()
                             .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                        version,
+                        is_utf8,
                     ),
                     tag: self.tag,
                 })
@@ -47,10 +47,7 @@ impl Request<Command> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        protocol::{ProtocolVersion, rename},
-        receiver::Receiver,
-    };
+    use crate::{protocol::rename, receiver::Receiver};
 
     #[test]
     fn parse_rename() {
@@ -78,7 +75,7 @@ mod tests {
                 receiver
                     .parse(&mut command.as_bytes().iter())
                     .unwrap()
-                    .parse_rename(ProtocolVersion::Rev2)
+                    .parse_rename(true)
                     .unwrap(),
                 arguments
             );

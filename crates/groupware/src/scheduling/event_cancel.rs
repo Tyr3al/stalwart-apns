@@ -5,7 +5,7 @@
  */
 
 use crate::scheduling::{
-    InstanceId, ItipError, ItipMessage, ItipSnapshots, ItipSummary,
+    InstanceId, ItipError, ItipMessage, ItipSummary,
     attendee::attendee_decline,
     itip::{itip_add_tz, itip_build_envelope},
     snapshot::itip_snapshot,
@@ -18,11 +18,11 @@ use calcard::{
         ICalendarParticipationStatus, ICalendarProperty, ICalendarStatus, ICalendarValue,
     },
 };
-use std::fmt::Display;
 
 pub fn itip_cancel(
     ical: &ICalendar,
     account_emails: &[String],
+    is_deletion: bool,
 ) -> Result<ItipMessage<ICalendar>, ItipError> {
     // Prepare iTIP message
     let itip = itip_snapshot(ical, account_emails, false)?;
@@ -58,19 +58,20 @@ pub fn itip_cancel(
         }
 
         if !recipients.is_empty() && component_type != &ICalendarComponentType::VFreebusy {
+            let instance = itip.main_instance_or_default();
             message.components.push(build_cancel_component(
-                component_type.clone(),
-                &itip,
+                instance.comp,
                 sequence,
                 dt_stamp,
-                cancel_guests.iter(),
+                &[],
             ));
+
+            // Add timezones
+            itip_add_tz(&mut message, ical);
 
             Ok(ItipMessage {
                 to: recipients.into_iter().collect(),
-                summary: ItipSummary::Cancel(
-                    itip.main_instance_or_default().build_summary(None, &[]),
-                ),
+                summary: ItipSummary::Cancel(instance.build_summary(None, &[])),
                 from: itip.organizer.email.email,
                 from_organizer: true,
                 message,
@@ -88,11 +89,16 @@ pub fn itip_cancel(
         let mut mail_from = None;
         let mut email_rcpt = AHashSet::new();
         for (instance_id, comp) in &itip.components {
-            if let Some((cancel_comp, attendee_email)) =
-                attendee_decline(instance_id, &itip, comp, &dt_stamp, &mut email_rcpt)
-            {
+            if let Some((cancel_comp, attendee_email)) = attendee_decline(
+                instance_id,
+                &itip,
+                comp,
+                &dt_stamp,
+                &mut email_rcpt,
+                is_deletion,
+            ) {
                 // Add cancel component
-                let comp_id = message.components.len() as u16;
+                let comp_id = message.components.len() as u32;
                 message.components[0].component_ids.push(comp_id);
                 message.components.push(cancel_comp);
                 mail_from = Some(&attendee_email.email);
@@ -121,19 +127,14 @@ pub fn itip_cancel(
     }
 }
 
-pub(crate) fn build_cancel_component<T, I>(
-    component_type: ICalendarComponentType,
-    itip: &ItipSnapshots<'_>,
+pub(crate) fn build_cancel_component(
+    component: &ICalendarComponent,
     sequence: i64,
     dt_stamp: PartialDateTime,
-    cancel_guests: T,
-) -> ICalendarComponent
-where
-    T: Iterator<Item = I>,
-    I: Display,
-{
+    attendees: &[&str],
+) -> ICalendarComponent {
     let mut cancel_comp = ICalendarComponent {
-        component_type,
+        component_type: component.component_type.clone(),
         entries: Vec::with_capacity(7),
         component_ids: vec![],
     };
@@ -143,17 +144,40 @@ where
     );
     cancel_comp.add_dtstamp(dt_stamp);
     cancel_comp.add_sequence(sequence);
-    cancel_comp.add_uid(itip.uid);
-    cancel_comp.add_property(
-        ICalendarProperty::Organizer,
-        ICalendarValue::Text(itip.organizer.email.to_string()),
+    cancel_comp.entries.extend(
+        component
+            .entries
+            .iter()
+            .filter(|e| match e.name {
+                ICalendarProperty::Organizer
+                | ICalendarProperty::Uid
+                | ICalendarProperty::Summary
+                | ICalendarProperty::Dtstart
+                | ICalendarProperty::Dtend
+                | ICalendarProperty::Duration
+                | ICalendarProperty::Due
+                | ICalendarProperty::RecurrenceId
+                | ICalendarProperty::Created
+                | ICalendarProperty::LastModified
+                | ICalendarProperty::Description
+                | ICalendarProperty::Location => true,
+                ICalendarProperty::Attendee => {
+                    attendees.is_empty()
+                        || e.values
+                            .first()
+                            .and_then(|v| v.as_text())
+                            .is_some_and(|email| {
+                                attendees.iter().any(|attendee| {
+                                    email
+                                        .strip_suffix(attendee)
+                                        .is_some_and(|v| v.ends_with(':') || v.is_empty())
+                                })
+                            })
+                }
+                _ => false,
+            })
+            .cloned(),
     );
 
-    for email in cancel_guests {
-        cancel_comp.add_property(
-            ICalendarProperty::Attendee,
-            ICalendarValue::Text(email.to_string()),
-        );
-    }
     cancel_comp
 }

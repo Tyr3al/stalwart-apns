@@ -4,36 +4,33 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use ldap3::{Ldap, LdapConnAsync, ResultEntry, Scope, SearchEntry};
-use mail_send::Credentials;
-use store::xxhash_rust;
-use trc::AddContext;
-
+use super::{AuthBind, LdapDirectory, LdapMappings};
 use crate::{
-    IntoError, Principal, PrincipalData, QueryBy, ROLE_ADMIN, ROLE_USER, Type,
+    IntoError, Principal, PrincipalData, QueryBy, QueryParams, ROLE_ADMIN, ROLE_USER, Type,
     backend::{
         RcptType,
         internal::{
+            SpecialSecrets,
             lookup::DirectoryStore,
             manage::{self, ManageDirectory, UpdatePrincipal},
         },
     },
 };
-
-use super::{AuthBind, LdapDirectory, LdapMappings};
+use ldap3::{Ldap, LdapConnAsync, ResultEntry, Scope, SearchEntry};
+use mail_send::Credentials;
+use store::xxhash_rust;
+use trc::AddContext;
 
 impl LdapDirectory {
-    pub async fn query(
-        &self,
-        by: QueryBy<'_>,
-        return_member_of: bool,
-    ) -> trc::Result<Option<Principal>> {
+    pub async fn query(&self, by: QueryParams<'_>) -> trc::Result<Option<Principal>> {
         let mut conn = self.pool.get().await.map_err(|err| err.into_error())?;
-        let (mut external_principal, member_of, stored_principal) = match by {
+        let (mut external_principal, member_of, stored_principal) = match by.by {
             QueryBy::Name(username) => {
                 let filter = self.mappings.filter_name.build(username);
                 if let Some(mut result) = self.find_principal(&mut conn, &filter).await? {
-                    result.principal.name = username.into();
+                    if result.principal.name.is_empty() {
+                        result.principal.name = username.into();
+                    }
                     (result.principal, result.member_of, None)
                 } else {
                     trc::event!(
@@ -47,7 +44,7 @@ impl LdapDirectory {
             QueryBy::Id(uid) => {
                 if let Some(stored_principal_) = self
                     .data_store
-                    .query(QueryBy::Id(uid), return_member_of)
+                    .query(QueryParams::id(uid).with_return_member_of(by.return_member_of))
                     .await?
                 {
                     if let Some(result) = self
@@ -112,7 +109,9 @@ impl LdapDirectory {
 
                         match result {
                             Ok(Some(mut result)) => {
-                                result.principal.name = username.into();
+                                if result.principal.name.is_empty() {
+                                    result.principal.name = username.into();
+                                }
                                 (result.principal, result.member_of, None)
                             }
                             Err(err)
@@ -162,7 +161,9 @@ impl LdapDirectory {
                                 .success()
                                 .is_ok()
                             {
-                                result.principal.name = username.into();
+                                if result.principal.name.is_empty() {
+                                    result.principal.name = username.into();
+                                }
                                 (result.principal, result.member_of, None)
                             } else {
                                 trc::event!(
@@ -184,8 +185,10 @@ impl LdapDirectory {
                     AuthBind::None => {
                         let filter = self.mappings.filter_name.build(username);
                         if let Some(mut result) = self.find_principal(&mut conn, &filter).await? {
-                            if result.principal.verify_secret(secret).await? {
-                                result.principal.name = username.into();
+                            if result.principal.verify_secret(secret, false, false).await? {
+                                if result.principal.name.is_empty() {
+                                    result.principal.name = username.into();
+                                }
                                 (result.principal, result.member_of, None)
                             } else {
                                 trc::event!(
@@ -209,8 +212,7 @@ impl LdapDirectory {
         };
 
         // Query groups
-        if !member_of.is_empty() && return_member_of {
-            let mut data = Vec::with_capacity(member_of.len());
+        if !member_of.is_empty() && by.return_member_of {
             for mut name in member_of {
                 if name.contains('=') {
                     let (rs, _res) = conn
@@ -226,27 +228,27 @@ impl LdapDirectory {
                         .map_err(|err| err.into_error().caused_by(trc::location!()))?;
                     for entry in rs {
                         'outer: for (attr, value) in SearchEntry::construct(entry).attrs {
-                            if self.mappings.attr_name.contains(&attr) {
-                                if let Some(group) = value.into_iter().next() {
-                                    if !group.is_empty() {
-                                        name = group;
-                                        break 'outer;
-                                    }
-                                }
+                            if self.mappings.attr_name.contains(&attr)
+                                && let Some(group) = value.into_iter().next()
+                                && !group.is_empty()
+                            {
+                                name = group;
+                                break 'outer;
                             }
                         }
                     }
                 }
 
-                data.push(
-                    self.data_store
-                        .get_or_create_principal_id(&name, Type::Group)
-                        .await
-                        .caused_by(trc::location!())?,
-                );
-            }
+                let account_id = self
+                    .data_store
+                    .get_or_create_principal_id(&name, Type::Group)
+                    .await
+                    .caused_by(trc::location!())?;
 
-            external_principal.data.push(PrincipalData::MemberOf(data));
+                external_principal
+                    .data
+                    .push(PrincipalData::MemberOf(account_id));
+            }
         }
 
         // Obtain account ID if not available
@@ -260,7 +262,7 @@ impl LdapDirectory {
                 .caused_by(trc::location!())?;
 
             self.data_store
-                .query(QueryBy::Id(id), return_member_of)
+                .query(QueryParams::id(id).with_return_member_of(by.return_member_of))
                 .await
                 .caused_by(trc::location!())?
                 .ok_or_else(|| manage::not_found(id).caused_by(trc::location!()))?
@@ -310,14 +312,14 @@ impl LdapDirectory {
         for entry in rs {
             let entry = SearchEntry::construct(entry);
             for attr in &self.mappings.attr_name {
-                if let Some(name) = entry.attrs.get(attr).and_then(|v| v.first()) {
-                    if !name.is_empty() {
-                        return self
-                            .data_store
-                            .get_or_create_principal_id(name, Type::Individual)
-                            .await
-                            .map(Some);
-                    }
+                if let Some(name) = entry.attrs.get(attr).and_then(|v| v.first())
+                    && !name.is_empty()
+                {
+                    return self
+                        .data_store
+                        .get_or_create_principal_id(name, Type::Individual)
+                        .await
+                        .map(Some);
                 }
             }
         }
@@ -427,6 +429,11 @@ impl LdapMappings {
         let mut principal = Principal::new(0, Type::Individual);
         let mut role = ROLE_USER;
         let mut member_of = vec![];
+        let mut description = None;
+        let mut secret = None;
+        let mut otp_secret = None;
+        let mut email = None;
+        let mut email_aliases = Vec::new();
 
         for (attr, value) in entry.attrs {
             if self.attr_name.contains(&attr) {
@@ -434,7 +441,10 @@ impl LdapMappings {
                     principal.name = value.into_iter().next().unwrap_or_default();
                 } else {
                     for (idx, item) in value.into_iter().enumerate() {
-                        principal.emails.insert(0, item.to_lowercase());
+                        if email.is_none() {
+                            email = Some(item.to_lowercase());
+                        }
+
                         if idx == 0 {
                             principal.name = item;
                         }
@@ -442,34 +452,47 @@ impl LdapMappings {
                 }
             } else if self.attr_secret.contains(&attr) {
                 for item in value {
-                    principal.secrets.push(item);
+                    if item.is_otp_secret() {
+                        otp_secret = Some(item);
+                    } else if item.is_app_secret() {
+                        principal.data.push(PrincipalData::AppPassword(item));
+                    } else if secret.is_none() {
+                        secret = Some(item);
+                    }
                 }
             } else if self.attr_secret_changed.contains(&attr) {
                 // Create a disabled AppPassword, used to indicate that the password has been changed
                 // but cannot be used for authentication.
-                for item in value {
-                    principal.secrets.push(format!(
-                        "$app${}$",
-                        xxhash_rust::xxh3::xxh3_64(item.as_bytes())
-                    ));
+                if secret.is_none() {
+                    secret = value.into_iter().next().map(|item| {
+                        format!("$app${}$", xxhash_rust::xxh3::xxh3_64(item.as_bytes()))
+                    });
                 }
             } else if self.attr_email_address.contains(&attr) {
                 for item in value {
-                    principal.emails.insert(0, item.to_lowercase());
+                    if email.is_some() {
+                        email_aliases.push(item.to_lowercase());
+                    } else {
+                        email = Some(item.to_lowercase());
+                    }
                 }
             } else if self.attr_email_alias.contains(&attr) {
                 for item in value {
-                    principal.emails.push(item.to_lowercase());
+                    email_aliases.push(item.to_lowercase());
                 }
             } else if let Some(idx) = self.attr_description.iter().position(|a| a == &attr) {
-                if principal.description.is_none() || idx == 0 {
-                    principal.description = value.into_iter().next();
+                if (description.is_none() || idx == 0)
+                    && let Some(desc) = value.into_iter().next()
+                {
+                    description = Some(desc);
                 }
             } else if self.attr_groups.contains(&attr) {
                 member_of.extend(value);
             } else if self.attr_quota.contains(&attr) {
-                if let Ok(quota) = value.into_iter().next().unwrap_or_default().parse::<u64>() {
-                    principal.quota = quota.into();
+                if let Ok(quota) = value.into_iter().next().unwrap_or_default().parse::<u64>()
+                    && quota > 0
+                {
+                    principal.data.push(PrincipalData::DiskQuota(quota));
                 }
             } else if self.attr_type.contains(&attr) {
                 for value in value {
@@ -491,7 +514,29 @@ impl LdapMappings {
             }
         }
 
-        principal.data.push(PrincipalData::Roles(vec![role]));
+        for alias in email_aliases {
+            if email.as_ref().is_none_or(|email| email != &alias) {
+                principal.data.push(PrincipalData::EmailAlias(alias));
+            }
+        }
+
+        if let Some(email) = email {
+            principal.data.push(PrincipalData::PrimaryEmail(email));
+        }
+
+        if let Some(secret) = secret {
+            principal.data.push(PrincipalData::Password(secret));
+        }
+
+        if let Some(otp_secret) = otp_secret {
+            principal.data.push(PrincipalData::OtpAuth(otp_secret));
+        }
+
+        if let Some(desc) = description {
+            principal.data.push(PrincipalData::Description(desc));
+        }
+
+        principal.data.push(PrincipalData::Role(role));
 
         LdapResult {
             dn: entry.dn,

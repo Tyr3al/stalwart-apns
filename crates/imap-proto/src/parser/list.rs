@@ -9,7 +9,6 @@ use compact_str::{CompactString, ToCompactString};
 use crate::{
     Command,
     protocol::{
-        ProtocolVersion,
         list::{self, ReturnOption, SelectionOption},
         status::Status,
     },
@@ -19,7 +18,7 @@ use crate::{
 
 impl Request<Command> {
     #[allow(clippy::while_let_on_iterator)]
-    pub fn parse_list(self, version: ProtocolVersion) -> trc::Result<list::Arguments> {
+    pub fn parse_list(self, is_utf8: bool) -> trc::Result<list::Arguments> {
         match self.tokens.len() {
             0 | 1 => Err(self.into_error("Missing arguments.")),
             2 => {
@@ -36,7 +35,7 @@ impl Request<Command> {
                             .unwrap()
                             .unwrap_string()
                             .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                        version,
+                        is_utf8,
                     ),
                     tag: self.tag,
                 })
@@ -102,7 +101,7 @@ impl Request<Command> {
                             token
                                 .unwrap_string()
                                 .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                            version,
+                            is_utf8,
                         ));
                     }
                 }
@@ -212,7 +211,6 @@ impl ReturnOption {
 mod tests {
     use crate::{
         protocol::{
-            ProtocolVersion,
             list::{self, ReturnOption, SelectionOption},
             status::Status,
         },
@@ -375,7 +373,7 @@ mod tests {
                 receiver
                     .parse(&mut command.as_bytes().iter())
                     .unwrap()
-                    .parse_list(ProtocolVersion::Rev2)
+                    .parse_list(true)
                     .unwrap(),
                 arguments
             );

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::ArchivedResource;
 use crate::{
     DavError, DavErrorCondition, DavResourceName, common::uri::DavUriResource,
     principal::propfind::PrincipalPropFind,
@@ -17,22 +18,19 @@ use dav_proto::{
         response::{Ace, BaseCondition, GrantDeny, Href, MultiStatus, Principal},
     },
 };
-use directory::{QueryBy, Type, backend::internal::manage::ManageDirectory};
+use directory::{QueryParams, Type, backend::internal::manage::ManageDirectory};
 use groupware::RFC_3986;
 use groupware::{cache::GroupwareCache, calendar::Calendar, contact::AddressBook, file::FileNode};
 use http_proto::HttpResponse;
 use hyper::StatusCode;
-use jmap_proto::types::{
-    acl::Acl,
-    collection::Collection,
-    value::{AclGrant, ArchivedAclGrant},
-};
 use rkyv::vec::ArchivedVec;
 use store::{ahash::AHashSet, roaring::RoaringBitmap, write::BatchBuilder};
 use trc::AddContext;
+use types::{
+    acl::{Acl, AclGrant, ArchivedAclGrant},
+    collection::Collection,
+};
 use utils::map::bitmap::Bitmap;
-
-use super::ArchivedResource;
 
 pub(crate) trait DavAclHandler: Sync + Send {
     fn handle_acl_request(
@@ -121,7 +119,7 @@ impl DavAclHandler for Server {
         // Validate ACL
         let acls = container.acls().unwrap();
         if !access_token.is_member(account_id)
-            && !acls.effective_acl(access_token).contains(Acl::Administer)
+            && !acls.effective_acl(access_token).contains(Acl::Share)
         {
             return Err(DavError::Code(StatusCode::FORBIDDEN));
         }
@@ -315,10 +313,12 @@ impl DavAclHandler for Server {
                     Privilege::Write => {
                         acls.insert(Acl::Modify);
                         acls.insert(Acl::Delete);
+                        acls.insert(Acl::AddItems);
                         acls.insert(Acl::ModifyItems);
                         acls.insert(Acl::RemoveItems);
                     }
                     Privilege::WriteContent => {
+                        acls.insert(Acl::AddItems);
                         acls.insert(Acl::Modify);
                         acls.insert(Acl::ModifyItems);
                     }
@@ -337,7 +337,7 @@ impl DavAclHandler for Server {
                     }
                     Privilege::ReadAcl => {}
                     Privilege::WriteAcl => {
-                        acls.insert(Acl::Administer);
+                        acls.insert(Acl::Share);
                     }
                     Privilege::ReadFreeBusy
                     | Privilege::ScheduleQueryFreeBusy
@@ -410,7 +410,7 @@ impl DavAclHandler for Server {
             // Verify that the principal is a valid principal
             let principal = self
                 .directory()
-                .query(QueryBy::Id(principal_id), false)
+                .query(QueryParams::id(principal_id).with_return_member_of(false))
                 .await
                 .caused_by(trc::location!())?
                 .ok_or_else(|| {
@@ -444,7 +444,7 @@ impl DavAclHandler for Server {
     ) -> crate::Result<Vec<Ace>> {
         let mut aces = Vec::with_capacity(grants.len());
         if access_token.is_member(account_id)
-            || grants.effective_acl(access_token).contains(Acl::Administer)
+            || grants.effective_acl(access_token).contains(Acl::Share)
         {
             for grant in grants.iter() {
                 let grant_account_id = u32::from(grant.account_id);
@@ -554,7 +554,7 @@ pub(crate) fn current_user_privilege_set(acl_bitmap: Bitmap<Acl>) -> Vec<Privile
             Acl::Delete | Acl::RemoveItems => {
                 acls.insert(Privilege::Write);
             }
-            Acl::Administer => {
+            Acl::Share => {
                 acls.insert(Privilege::ReadAcl);
                 acls.insert(Privilege::WriteAcl);
             }

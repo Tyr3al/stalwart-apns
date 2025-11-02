@@ -128,6 +128,7 @@ impl Language {
             "it" => Language::Italian,
             "fr" => Language::French,
             "de" => Language::German,
+            "da" => Language::Danish,
             "ru" => Language::Russian,
             "zh" => Language::Mandarin,
             "ja" => Language::Japanese,
@@ -169,6 +170,9 @@ impl Language {
             "zu" => Language::Zulu,
             "sn" => Language::Shona,
             "ak" => Language::Akan,
+            "ca" => Language::Catalan,
+            "el" => Language::Greek,
+            "sv" => Language::Swedish,
         )
         .copied()
     }

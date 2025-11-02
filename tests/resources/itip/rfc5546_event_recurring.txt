@@ -33,7 +33,7 @@ summary.attendee: Participants([ItipParticipant { email: "a@example.com", name: 
 summary.description: Text("IETF-C&S Conference Call")
 summary.dtstart: Time(ItipTime { start: 865198800, tz_id: 32768 })
 summary.location: Text("Conference Call")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None, rscale: None, skip: None })
 summary.summary: Text("IETF Calendaring Working Group Meeting")
 BEGIN:VCALENDAR
 METHOD:REQUEST
@@ -113,7 +113,7 @@ summary.attendee: Participants([ItipParticipant { email: "a@example.com", name: 
 summary.description: Text("IETF-C&S Conference Call")
 summary.dtstart: Time(ItipTime { start: 865198800, tz_id: 32768 })
 summary.location: Text("Conference Call")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None, rscale: None, skip: None })
 summary.summary: Text("IETF Calendaring Working Group Meeting")
 BEGIN:VCALENDAR
 METHOD:ADD
@@ -203,7 +203,7 @@ summary.attendee: Participants([ItipParticipant { email: "a@example.com", name: 
 summary.description: Text("IETF-C&S Conference Call")
 summary.dtstart: Time(ItipTime { start: 865198800, tz_id: 32768 })
 summary.location: Text("Conference Call")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None, rscale: None, skip: None })
 summary.summary: Text("IETF Calendaring Working Group Meeting")
 BEGIN:VCALENDAR
 METHOD:CANCEL
@@ -354,7 +354,7 @@ summary.attendee: Participants([ItipParticipant { email: "a@example.com", name: 
 summary.description: Text("IETF-C&S Conference Call")
 summary.dtstart: Time(ItipTime { start: 865198800, tz_id: 32768 })
 summary.location: Text("Conference Call")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None, rscale: None, skip: None })
 summary.summary: Text("IETF Calendaring Working Group Meeting")
 BEGIN:VCALENDAR
 METHOD:ADD
@@ -534,18 +534,23 @@ summary: cancel
 summary.description: Text("IETF-C&S Conference Call")
 summary.dtstart: Time(ItipTime { start: 865198800, tz_id: 32768 })
 summary.location: Text("Conference Call")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Monthly, until: Some(PartialDateTime { year: Some(1998), month: Some(9), day: Some(1), hour: Some(21), minute: Some(0), second: Some(0), tz_hour: Some(0), tz_minute: Some(0), tz_minus: false }), count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [], bymonthday: [1], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: None, rscale: None, skip: None })
 summary.summary: Text("IETF Calendaring Working Group Meeting")
 BEGIN:VCALENDAR
 METHOD:CANCEL
 PRODID:-//Stalwart Labs LLC//Stalwart Server//EN
 VERSION:2.0
 BEGIN:VEVENT
+DESCRIPTION:IETF-C&S Conference Call
+LOCATION:Conference Call
 STATUS:CANCELLED
-ATTENDEE:mailto:a@example.com
+SUMMARY:IETF Calendaring Working Group Meeting
+DTEND:19970601T220000Z
+DTSTART:19970601T210000Z
 ATTENDEE:mailto:b@example.com
 ATTENDEE:mailto:c@example.com
 ATTENDEE:mailto:d@example.com
+ATTENDEE;ROLE=CHAIR;PARTSTAT=ACCEPTED:mailto:a@example.com
 ORGANIZER:mailto:a@example.com
 UID:guid-1@example.com
 DTSTAMP:0
@@ -569,10 +574,10 @@ STATUS:CANCELLED
 SUMMARY:IETF Calendaring Working Group Meeting
 DTEND:19970601T220000Z
 DTSTART:19970601T210000Z
-ATTENDEE:mailto:a@example.com
 ATTENDEE:mailto:b@example.com
 ATTENDEE:mailto:c@example.com
 ATTENDEE:mailto:d@example.com
+ATTENDEE;ROLE=CHAIR;PARTSTAT=ACCEPTED:mailto:a@example.com
 ORGANIZER:mailto:a@example.com
 UID:guid-1@example.com
 RRULE:FREQ=MONTHLY;UNTIL=19980901T210000Z;BYMONTHDAY=1
@@ -586,10 +591,10 @@ STATUS:CANCELLED
 SUMMARY:IETF Calendaring Working Group Meeting
 DTEND:19970703T220000Z
 DTSTART:19970703T210000Z
-ATTENDEE:mailto:a@example.com
 ATTENDEE:mailto:b@example.com
 ATTENDEE:mailto:c@example.com
 ATTENDEE:mailto:d@example.com
+ATTENDEE;ROLE=CHAIR;PARTSTAT=ACCEPTED:mailto:a@example.com
 ORGANIZER:mailto:a@example.com
 RECURRENCE-ID:19970701T210000Z
 UID:guid-1@example.com
@@ -598,10 +603,10 @@ SEQUENCE:2
 END:VEVENT
 BEGIN:VEVENT
 STATUS:CANCELLED
-ATTENDEE:mailto:a@example.com
 ATTENDEE:mailto:b@example.com
 ATTENDEE:mailto:c@example.com
 ATTENDEE:mailto:d@example.com
+ATTENDEE;ROLE=CHAIR;PARTSTAT=ACCEPTED:mailto:a@example.com
 ORGANIZER:mailto:a@example.com
 RECURRENCE-ID:19970801T210000Z
 UID:guid-1@example.com
@@ -616,10 +621,10 @@ STATUS:CANCELLED
 SUMMARY:IETF Calendaring Working Group Meeting
 DTEND:19970901T220000Z
 DTSTART:19970901T210000Z
-ATTENDEE:mailto:a@example.com
 ATTENDEE:mailto:b@example.com
 ATTENDEE:mailto:c@example.com
 ATTENDEE:mailto:d@example.com
+ATTENDEE;ROLE=CHAIR;PARTSTAT=ACCEPTED:mailto:a@example.com
 ORGANIZER:mailto:a@example.com
 RECURRENCE-ID;THISANDFUTURE:19970901T210000Z
 UID:guid-1@example.com
@@ -668,7 +673,7 @@ summary: invite
 summary.attendee: Participants([ItipParticipant { email: "a@example.com", name: None, is_organizer: true }, ItipParticipant { email: "b@example.com", name: None, is_organizer: false }])
 summary.dtstart: Time(ItipTime { start: 888958800, tz_id: 32768 })
 summary.location: Text("The White Room")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday) })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday), rscale: None, skip: None })
 summary.summary: Text("Review Accounts")
 BEGIN:VCALENDAR
 METHOD:REQUEST
@@ -732,9 +737,9 @@ summary: update REQUEST
 summary.attendee: Participants([ItipParticipant { email: "a@example.com", name: None, is_organizer: true }, ItipParticipant { email: "b@example.com", name: None, is_organizer: false }])
 summary.dtstart: Time(ItipTime { start: 888958800, tz_id: 32768 })
 summary.location: Text("The White Room")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }, ICalendarDay { ordwk: None, weekday: Thursday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday) })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }, ICalendarDay { ordwk: None, weekday: Thursday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday), rscale: None, skip: None })
 summary.summary: Text("Review Accounts")
-~summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday) })
+~summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday), rscale: None, skip: None })
 BEGIN:VCALENDAR
 METHOD:REQUEST
 PRODID:-//Stalwart Labs LLC//Stalwart Server//EN
@@ -761,15 +766,17 @@ summary: cancel
 summary.attendee: Participants([ItipParticipant { email: "a@example.com", name: None, is_organizer: true }, ItipParticipant { email: "b@example.com", name: None, is_organizer: false }])
 summary.dtstart: Time(ItipTime { start: 888958800, tz_id: 32768 })
 summary.location: Text("The White Room")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday) })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday), rscale: None, skip: None })
 summary.summary: Text("Review Accounts")
 BEGIN:VCALENDAR
 METHOD:CANCEL
 PRODID:-//Stalwart Labs LLC//Stalwart Server//EN
 VERSION:2.0
 BEGIN:VEVENT
+LOCATION:The Red Room
 STATUS:CANCELLED
-ATTENDEE:mailto:c@example.com
+SUMMARY:Review Accounts
+ATTENDEE;RSVP=TRUE:mailto:c@example.com
 ORGANIZER:mailto:a@example.com
 RECURRENCE-ID;THISANDFUTURE:19970901T210000Z
 UID:123456789@example.com
@@ -811,7 +818,7 @@ BEGIN:VEVENT
 LOCATION:The Red Room
 STATUS:CANCELLED
 SUMMARY:Review Accounts
-ATTENDEE:mailto:c@example.com
+ATTENDEE;RSVP=TRUE:mailto:c@example.com
 ORGANIZER:mailto:a@example.com
 RECURRENCE-ID;THISANDFUTURE:19970901T210000Z
 UID:123456789@example.com
@@ -842,13 +849,16 @@ to: a@example.com
 summary: rsvp DECLINED
 summary.dtstart: Time(ItipTime { start: 888958800, tz_id: 32768 })
 summary.location: Text("The White Room")
-summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }, ICalendarDay { ordwk: None, weekday: Thursday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday) })
+summary.rrule: Rrule(ICalendarRecurrenceRule { freq: Weekly, until: None, count: None, interval: None, bysecond: [], byminute: [], byhour: [], byday: [ICalendarDay { ordwk: None, weekday: Tuesday }, ICalendarDay { ordwk: None, weekday: Thursday }], bymonthday: [], byyearday: [], byweekno: [], bymonth: [], bysetpos: [], wkst: Some(Sunday), rscale: None, skip: None })
 summary.summary: Text("Review Accounts")
 BEGIN:VCALENDAR
 METHOD:REPLY
 PRODID:-//Stalwart Labs LLC//Stalwart Server//EN
 VERSION:2.0
 BEGIN:VEVENT
+SUMMARY:Review Accounts
+DTEND:19980303T220000Z
+DTSTART:19980303T210000Z
 ATTENDEE;PARTSTAT=DECLINED:mailto:b@example.com
 ORGANIZER:mailto:a@example.com
 UID:123456789@example.com

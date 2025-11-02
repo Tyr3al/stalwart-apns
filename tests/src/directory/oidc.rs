@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use base64::{Engine, engine::general_purpose};
-use directory::QueryBy;
+use directory::QueryParams;
 use http_proto::{JsonProblemResponse, JsonResponse, ToHttpResponse};
 use hyper::{Method, StatusCode};
 use mail_send::Credentials;
@@ -106,10 +106,10 @@ async fn oidc_directory() {
         // Test an invalid token
         let err = directory
             .query(
-                QueryBy::Credentials(&Credentials::OAuthBearer {
+                QueryParams::credentials(&Credentials::OAuthBearer {
                     token: "invalid_or_expired_token".to_string(),
-                }),
-                false,
+                })
+                .with_return_member_of(false),
             )
             .await
             .unwrap_err();
@@ -122,19 +122,16 @@ async fn oidc_directory() {
         // Test a valid token
         let principal = directory
             .query(
-                QueryBy::Credentials(&Credentials::OAuthBearer {
+                QueryParams::credentials(&Credentials::OAuthBearer {
                     token: TEST_TOKEN.to_string(),
-                }),
-                false,
+                })
+                .with_return_member_of(false),
             )
             .await
             .unwrap()
             .unwrap();
         assert_eq!(principal.name(), "jdoe");
-        assert_eq!(
-            principal.emails.first().map(|s| s.as_str()),
-            Some("john@example.org")
-        );
+        assert_eq!(principal.email_addresses().next(), Some("john@example.org"));
         assert_eq!(principal.description(), Some("John Doe"));
     }
 }

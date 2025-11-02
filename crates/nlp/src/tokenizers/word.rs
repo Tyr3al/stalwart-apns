@@ -15,7 +15,7 @@ pub struct WordTokenizer<'x> {
 }
 
 impl WordTokenizer<'_> {
-    pub fn new(text: &str, max_token_length: usize) -> WordTokenizer {
+    pub fn new(text: &'_ str, max_token_length: usize) -> WordTokenizer<'_> {
         WordTokenizer {
             max_token_length,
             text,

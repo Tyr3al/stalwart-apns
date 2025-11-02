@@ -12,7 +12,8 @@ use jmap_proto::{
         query::{QueryRequest, QueryResponse},
         set::{SetRequest, SetResponse},
     },
-    types::{collection::Collection, state::State},
+    object::JmapObject,
+    types::state::State,
 };
 use std::{fmt::Display, future::Future};
 use store::{
@@ -21,16 +22,25 @@ use store::{
     roaring::RoaringBitmap,
 };
 use trc::AddContext;
+use types::collection::Collection;
 
+pub mod addressbook;
 pub mod api;
 pub mod blob;
+pub mod calendar;
+pub mod calendar_event;
+pub mod calendar_event_notification;
 pub mod changes;
+pub mod contact;
 pub mod email;
+pub mod file;
 pub mod identity;
 pub mod mailbox;
+pub mod participant_identity;
 pub mod principal;
 pub mod push;
 pub mod quota;
+pub mod share_notification;
 pub mod sieve;
 pub mod submission;
 pub mod thread;
@@ -38,11 +48,11 @@ pub mod vacation;
 pub mod websocket;
 
 impl JmapMethods for Server {
-    async fn prepare_set_response<T: Sync + Send>(
+    async fn prepare_set_response<T: JmapObject + Sync + Send>(
         &self,
-        request: &SetRequest<T>,
+        request: &SetRequest<'_, T>,
         asserted_state: State,
-    ) -> trc::Result<SetResponse> {
+    ) -> trc::Result<SetResponse<T>> {
         Ok(
             SetResponse::from_request(request, self.core.jmap.set_max_objects)?
                 .with_state(asserted_state),
@@ -85,13 +95,12 @@ impl JmapMethods for Server {
             })
     }
 
-    async fn build_query_response<T: Sync + Send>(
-        &self,
-        result_set: &ResultSet,
+    async fn build_query_response<T: JmapObject + Sync + Send>(
+        &'_ self,
+        total: usize,
         query_state: State,
         request: &QueryRequest<T>,
-    ) -> trc::Result<(QueryResponse, Option<Pagination>)> {
-        let total = result_set.results.len() as usize;
+    ) -> trc::Result<(QueryResponse, Option<Pagination<'_>>)> {
         let (limit_total, limit) = if let Some(limit) = request.limit {
             if limit > 0 {
                 let limit = std::cmp::min(limit, self.core.jmap.query_max_results);
@@ -161,11 +170,11 @@ impl JmapMethods for Server {
 }
 
 pub trait JmapMethods: Sync + Send {
-    fn prepare_set_response<T: Sync + Send>(
+    fn prepare_set_response<T: JmapObject + Sync + Send>(
         &self,
         request: &SetRequest<T>,
         asserted_state: State,
-    ) -> impl Future<Output = trc::Result<SetResponse>> + Send;
+    ) -> impl Future<Output = trc::Result<SetResponse<T>>> + Send;
 
     fn filter(
         &self,
@@ -181,12 +190,12 @@ pub trait JmapMethods: Sync + Send {
         filters: Vec<FtsFilter<T>>,
     ) -> impl Future<Output = trc::Result<RoaringBitmap>> + Send;
 
-    fn build_query_response<T: Sync + Send>(
-        &self,
-        result_set: &ResultSet,
+    fn build_query_response<T: JmapObject + Sync + Send>(
+        &'_ self,
+        total: usize,
         query_state: State,
         request: &QueryRequest<T>,
-    ) -> impl Future<Output = trc::Result<(QueryResponse, Option<Pagination>)>> + Send;
+    ) -> impl Future<Output = trc::Result<(QueryResponse, Option<Pagination<'_>>)>> + Send;
 
     fn sort(
         &self,
@@ -206,11 +215,7 @@ impl UpdateResults for QueryResponse {
         // Prepare response
         if sorted_results.found_anchor {
             self.position = sorted_results.position;
-            self.ids = sorted_results
-                .ids
-                .into_iter()
-                .map(|id| id.into())
-                .collect::<Vec<_>>();
+            self.ids = sorted_results.ids;
             Ok(())
         } else {
             Err(trc::JmapEvent::AnchorNotFound.into_err())

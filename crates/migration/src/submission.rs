@@ -5,12 +5,11 @@
  */
 
 use super::object::Object;
-use crate::object::FromLegacy;
+use crate::object::{FromLegacy, Property, Value};
 use common::Server;
 use email::submission::{
     Address, Delivered, DeliveryStatus, EmailSubmission, Envelope, UndoStatus,
 };
-use jmap_proto::types::{collection::Collection, property::Property, value::Value};
 use store::{
     SUBSPACE_BITMAP_TAG, SUBSPACE_BITMAP_TEXT, SUBSPACE_INDEXES, Serialize, SerializeInfallible,
     U64_LEN, ValueKey,
@@ -19,6 +18,10 @@ use store::{
     },
 };
 use trc::AddContext;
+use types::{
+    collection::Collection,
+    field::{EmailSubmissionField, Field},
+};
 use utils::map::vec_map::VecMap;
 
 pub(crate) async fn migrate_email_submissions(
@@ -69,7 +72,7 @@ pub(crate) async fn migrate_email_submissions(
                 account_id,
                 collection: Collection::EmailSubmission.into(),
                 document_id: email_submission_id,
-                class: ValueClass::Property(Property::Value.into()),
+                class: ValueClass::Property(Field::ARCHIVE.into()),
             })
             .await
         {
@@ -80,13 +83,13 @@ pub(crate) async fn migrate_email_submissions(
                     .with_account_id(account_id)
                     .with_collection(Collection::EmailSubmission)
                     .update_document(email_submission_id)
-                    .index(Property::UndoStatus, es.undo_status.as_index())
-                    .index(Property::EmailId, es.email_id.serialize())
-                    .index(Property::ThreadId, es.thread_id.serialize())
-                    .index(Property::IdentityId, es.identity_id.serialize())
-                    .index(Property::SendAt, es.send_at.serialize())
+                    .index(EmailSubmissionField::UndoStatus, es.undo_status.as_index())
+                    .index(EmailSubmissionField::EmailId, es.email_id.serialize())
+                    .index(EmailSubmissionField::ThreadId, es.thread_id.serialize())
+                    .index(EmailSubmissionField::IdentityId, es.identity_id.serialize())
+                    .index(EmailSubmissionField::SendAt, es.send_at.serialize())
                     .set(
-                        Property::Value,
+                        Field::ARCHIVE,
                         Archiver::new(es).serialize().caused_by(trc::location!())?,
                     );
                 did_migrate = true;
@@ -105,7 +108,7 @@ pub(crate) async fn migrate_email_submissions(
                         account_id,
                         collection: Collection::EmailSubmission.into(),
                         document_id: email_submission_id,
-                        class: ValueClass::Property(Property::Value.into()),
+                        class: ValueClass::Property(Field::ARCHIVE.into()),
                     })
                     .await
                     .is_err()
@@ -174,7 +177,7 @@ fn convert_delivery_status(value: &Value) -> VecMap<String, DeliveryStatus> {
     if let Value::List(list) = value {
         for value in list {
             if let Value::Object(obj) = value {
-                for (k, v) in obj.0.iter() {
+                for (k, v) in obj.properties.iter() {
                     if let (Property::_T(k), Value::Object(v)) = (k, v) {
                         let mut delivery_status = DeliveryStatus {
                             smtp_reply: String::new(),
@@ -182,7 +185,7 @@ fn convert_delivery_status(value: &Value) -> VecMap<String, DeliveryStatus> {
                             displayed: false,
                         };
 
-                        for (property, value) in &v.0 {
+                        for (property, value) in &v.properties {
                             match (property, value) {
                                 (Property::Delivered, Value::Text(v)) => match v.as_str() {
                                     "queued" => delivery_status.delivered = Delivered::Queued,
@@ -215,7 +218,7 @@ fn convert_envelope(value: &Value) -> Envelope {
     };
 
     if let Value::Object(obj) = value {
-        for (property, value) in &obj.0 {
+        for (property, value) in &obj.properties {
             match (property, value) {
                 (Property::MailFrom, _) => {
                     envelope.mail_from = convert_envelope_address(value).unwrap_or_default();
@@ -236,27 +239,27 @@ fn convert_envelope(value: &Value) -> Envelope {
 }
 
 fn convert_envelope_address(envelope: &Value) -> Option<Address> {
-    if let Value::Object(envelope) = envelope {
-        if let (Value::Text(email), Value::Object(params)) = (
+    if let Value::Object(envelope) = envelope
+        && let (Value::Text(email), Value::Object(params)) = (
             envelope.get(&Property::Email),
             envelope.get(&Property::Parameters),
-        ) {
-            let mut addr = Address {
-                email: email.to_string(),
-                parameters: None,
-            };
-            for (k, v) in params.0.iter() {
-                if let Property::_T(k) = &k {
-                    if !k.is_empty() {
-                        let k = k.to_string();
-                        let v = v.as_string().map(|s| s.to_string());
+        )
+    {
+        let mut addr = Address {
+            email: email.to_string(),
+            parameters: None,
+        };
+        for (k, v) in params.properties.iter() {
+            if let Property::_T(k) = &k
+                && !k.is_empty()
+            {
+                let k = k.to_string();
+                let v = v.as_string().map(|s| s.to_string());
 
-                        addr.parameters.get_or_insert_default().append(k, v);
-                    }
-                }
+                addr.parameters.get_or_insert_default().append(k, v);
             }
-            return Some(addr);
         }
+        return Some(addr);
     }
 
     None

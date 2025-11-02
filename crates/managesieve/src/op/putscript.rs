@@ -9,7 +9,6 @@ use common::{listener::SessionStream, storage::index::ObjectIndexBuilder};
 use directory::Permission;
 use email::sieve::SieveScript;
 use imap_proto::receiver::Request;
-use jmap_proto::types::{collection::Collection, property::Property};
 use sieve::compiler::ErrorType;
 use std::time::Instant;
 use store::{
@@ -18,6 +17,7 @@ use store::{
     write::{Archiver, BatchBuilder},
 };
 use trc::AddContext;
+use types::{collection::Collection, field::SieveField};
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_putscript(&mut self, request: Request<Command>) -> trc::Result<Vec<u8>> {
@@ -47,10 +47,10 @@ impl<T: SessionStream> Session<T> {
         let script_size = script_bytes.len() as i64;
 
         // Check quota
-        let resource_token = self.state.access_token().as_resource_token();
-        let account_id = resource_token.account_id;
+        let access_token = self.state.access_token();
+        let account_id = access_token.primary_id();
         self.server
-            .has_available_quota(&resource_token, script_bytes.len() as u64)
+            .has_available_quota(&access_token.as_resource_token(), script_bytes.len() as u64)
             .await
             .caused_by(trc::location!())?;
 
@@ -61,7 +61,7 @@ impl<T: SessionStream> Session<T> {
             .caused_by(trc::location!())?
             .map(|ids| ids.len() as usize)
             .unwrap_or(0)
-            > self.server.core.jmap.sieve_max_scripts
+            > access_token.object_quota(Collection::SieveScript) as usize
         {
             return Err(trc::ManageSieveEvent::Error
                 .into_err()
@@ -141,7 +141,7 @@ impl<T: SessionStream> Session<T> {
                                 .with_blob_hash(blob_hash.clone()),
                         )
                         .with_current(script)
-                        .with_tenant_id(&resource_token),
+                        .with_access_token(access_token),
                 )
                 .caused_by(trc::location!())?;
 
@@ -182,10 +182,9 @@ impl<T: SessionStream> Session<T> {
                     ObjectIndexBuilder::<(), _>::new()
                         .with_changes(
                             SieveScript::new(name.clone(), blob_hash.clone())
-                                .with_is_active(false)
                                 .with_size(script_size as u32),
                         )
-                        .with_tenant_id(&resource_token),
+                        .with_access_token(access_token),
                 )
                 .caused_by(trc::location!())?;
 
@@ -226,7 +225,10 @@ impl<T: SessionStream> Session<T> {
                 .filter(
                     account_id,
                     Collection::SieveScript,
-                    vec![Filter::eq(Property::Name, name.to_lowercase().into_bytes())],
+                    vec![Filter::eq(
+                        SieveField::Name,
+                        name.to_lowercase().into_bytes(),
+                    )],
                 )
                 .await
                 .caused_by(trc::location!())?

@@ -4,17 +4,16 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::{Command, ResponseCode, SerializeResponse, Session, State};
 use common::{
     KV_RATE_LIMIT_IMAP,
     listener::{SessionResult, SessionStream},
 };
 use imap_proto::receiver::{self, Request};
-use jmap_proto::types::{collection::Collection, property::Property};
 use store::query::Filter;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use trc::{AddContext, SecurityEvent};
-
-use super::{Command, ResponseCode, SerializeResponse, Session, State};
+use types::{collection::Collection, field::SieveField};
 
 impl<T: SessionStream> Session<T> {
     pub async fn ingest(&mut self, bytes: &[u8]) -> SessionResult {
@@ -132,14 +131,13 @@ impl<T: SessionStream> Session<T> {
             }
         }
 
-        if let Some(needs_literal) = needs_literal {
-            if let Err(err) = self
+        if let Some(needs_literal) = needs_literal
+            && let Err(err) = self
                 .write(format!("OK Ready for {} bytes.\r\n", needs_literal).as_bytes())
                 .await
-            {
-                trc::error!(err.span_id(self.session_id));
-                return SessionResult::Close;
-            }
+        {
+            trc::error!(err.span_id(self.session_id));
+            return SessionResult::Close;
         }
 
         SessionResult::Continue
@@ -279,7 +277,10 @@ impl<T: AsyncWrite + AsyncRead> Session<T> {
             .filter(
                 account_id,
                 Collection::SieveScript,
-                vec![Filter::eq(Property::Name, name.to_lowercase().into_bytes())],
+                vec![Filter::eq(
+                    SieveField::Name,
+                    name.to_lowercase().into_bytes(),
+                )],
             )
             .await
             .caused_by(trc::location!())

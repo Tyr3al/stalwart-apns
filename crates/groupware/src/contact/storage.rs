@@ -4,14 +4,12 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::{AddressBook, ArchivedAddressBook, ArchivedContactCard, ContactCard};
+use crate::DestroyArchive;
 use common::{Server, auth::AccessToken, storage::index::ObjectIndexBuilder};
-use jmap_proto::types::collection::{Collection, VanishedCollection};
 use store::write::{Archive, BatchBuilder, now};
 use trc::AddContext;
-
-use crate::DestroyArchive;
-
-use super::{AddressBook, ArchivedAddressBook, ArchivedContactCard, ContactCard};
+use types::collection::{Collection, VanishedCollection};
 
 impl ContactCard {
     pub fn update<'x>(
@@ -36,7 +34,7 @@ impl ContactCard {
                 ObjectIndexBuilder::new()
                     .with_current(card)
                     .with_changes(new_card)
-                    .with_tenant_id(access_token),
+                    .with_access_token(access_token),
             )
             .map(|b| b.commit_point())
     }
@@ -62,7 +60,7 @@ impl ContactCard {
             .custom(
                 ObjectIndexBuilder::<(), _>::new()
                     .with_changes(card)
-                    .with_tenant_id(access_token),
+                    .with_access_token(access_token),
             )
             .map(|b| b.commit_point())
     }
@@ -90,7 +88,7 @@ impl AddressBook {
             .custom(
                 ObjectIndexBuilder::<(), _>::new()
                     .with_changes(book)
-                    .with_tenant_id(access_token),
+                    .with_access_token(access_token),
             )
             .map(|b| b.commit_point())
     }
@@ -116,7 +114,7 @@ impl AddressBook {
                 ObjectIndexBuilder::new()
                     .with_current(book)
                     .with_changes(new_book)
-                    .with_tenant_id(access_token),
+                    .with_access_token(access_token),
             )
             .map(|b| b.commit_point())
     }
@@ -176,7 +174,7 @@ impl DestroyArchive<Archive<&ArchivedAddressBook>> {
             .delete_document(document_id)
             .custom(
                 ObjectIndexBuilder::<_, ()>::new()
-                    .with_tenant_id(access_token)
+                    .with_access_token(access_token)
                     .with_current(book),
             )
             .caused_by(trc::location!())?;
@@ -222,7 +220,7 @@ impl DestroyArchive<Archive<&ArchivedContactCard>> {
                     .update_document(document_id)
                     .custom(
                         ObjectIndexBuilder::new()
-                            .with_tenant_id(access_token)
+                            .with_access_token(access_token)
                             .with_current(card)
                             .with_changes(new_card),
                     )
@@ -233,7 +231,7 @@ impl DestroyArchive<Archive<&ArchivedContactCard>> {
                     .delete_document(document_id)
                     .custom(
                         ObjectIndexBuilder::<_, ()>::new()
-                            .with_tenant_id(access_token)
+                            .with_access_token(access_token)
                             .with_current(card),
                     )
                     .caused_by(trc::location!())?;
@@ -247,5 +245,27 @@ impl DestroyArchive<Archive<&ArchivedContactCard>> {
         }
 
         Ok(())
+    }
+
+    pub fn delete_all(
+        self,
+        access_token: &AccessToken,
+        account_id: u32,
+        document_id: u32,
+        batch: &mut BatchBuilder,
+    ) -> trc::Result<()> {
+        batch
+            .with_account_id(account_id)
+            .with_collection(Collection::ContactCard)
+            .delete_document(document_id)
+            .custom(
+                ObjectIndexBuilder::<_, ()>::new()
+                    .with_access_token(access_token)
+                    .with_current(self.0),
+            )
+            .caused_by(trc::location!())
+            .map(|b| {
+                b.commit_point();
+            })
     }
 }

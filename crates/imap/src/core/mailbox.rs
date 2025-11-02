@@ -9,24 +9,22 @@ use crate::core::Mailbox;
 use ahash::AHashMap;
 use common::{
     auth::AccessToken,
-    config::jmap::settings::SpecialUse,
     listener::{SessionStream, limiter::InFlight},
     sharing::EffectiveAcl,
 };
-
 use directory::backend::internal::manage::ManageDirectory;
 use email::{
     cache::{MessageCacheFetch, email::MessageCacheAccess, mailbox::MailboxCacheAccess},
     mailbox::INBOX_ID,
 };
 use imap_proto::protocol::list::Attribute;
-use jmap_proto::types::{acl::Acl, collection::Collection, id::Id, keyword::Keyword};
 use parking_lot::Mutex;
 use std::{
     collections::BTreeMap,
     sync::{Arc, atomic::Ordering},
 };
 use trc::AddContext;
+use types::{acl::Acl, collection::Collection, id::Id, keyword::Keyword, special_use::SpecialUse};
 
 impl<T: SessionStream> SessionData<T> {
     pub async fn new(
@@ -316,12 +314,11 @@ impl<T: SessionStream> SessionData<T> {
                         // Add new mailboxes
                         for (mailbox_name, mailbox_id) in new_account.mailbox_names.iter() {
                             if let Some(old_mailbox) = old_account.mailbox_state.get(mailbox_id) {
-                                if let Some(mailbox) = new_account.mailbox_state.get(mailbox_id) {
-                                    if mailbox.total_messages != old_mailbox.total_messages
-                                        || mailbox.total_unseen != old_mailbox.total_unseen
-                                    {
-                                        changes.changed.push(mailbox_name.clone());
-                                    }
+                                if let Some(mailbox) = new_account.mailbox_state.get(mailbox_id)
+                                    && (mailbox.total_messages != old_mailbox.total_messages
+                                        || mailbox.total_unseen != old_mailbox.total_unseen)
+                                {
+                                    changes.changed.push(mailbox_name.clone());
                                 }
                             } else {
                                 changes.added.push(mailbox_name.clone());

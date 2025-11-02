@@ -4,37 +4,34 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::{
-    net::{IpAddr, Ipv4Addr},
-    path::PathBuf,
-    sync::Arc,
-};
-
-use arc_swap::ArcSwap;
-use pwhash::sha512_crypt;
-use store::{
-    Stores,
-    rand::{Rng, distr::Alphanumeric, rng},
-};
-use tokio::sync::{Notify, Semaphore, mpsc};
-use utils::{
-    Semver, UnwrapFailure,
-    config::{Config, ConfigKey},
-    failed,
-};
-
-use crate::{
-    Caches, Core, Data, IPC_CHANNEL_BUFFER, Inner, Ipc,
-    config::{network::AsnGeoLookupConfig, server::Listeners, telemetry::Telemetry},
-    core::BuildServer,
-    ipc::{BroadcastEvent, HousekeeperEvent, QueueEvent, ReportingEvent, StateEvent},
-};
-
 use super::{
     WEBADMIN_KEY,
     backup::BackupParams,
     config::{ConfigManager, Patterns},
     console::store_console,
+};
+use crate::{
+    Caches, Core, Data, IPC_CHANNEL_BUFFER, Inner, Ipc,
+    config::{network::AsnGeoLookupConfig, server::Listeners, telemetry::Telemetry},
+    core::BuildServer,
+    ipc::{BroadcastEvent, HousekeeperEvent, PushEvent, QueueEvent, ReportingEvent},
+};
+use arc_swap::ArcSwap;
+use pwhash::sha512_crypt;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    sync::Arc,
+};
+use store::{
+    Stores,
+    rand::{Rng, distr::Alphanumeric, rng},
+};
+use tokio::sync::{Notify, mpsc};
+use utils::{
+    UnwrapFailure,
+    config::{Config, ConfigKey},
+    failed,
 };
 
 pub struct BootManager {
@@ -45,7 +42,7 @@ pub struct BootManager {
 }
 
 pub struct IpcReceivers {
-    pub state_rx: Option<mpsc::Receiver<StateEvent>>,
+    pub push_rx: Option<mpsc::Receiver<PushEvent>>,
     pub housekeeper_rx: Option<mpsc::Receiver<HousekeeperEvent>>,
     pub queue_rx: Option<mpsc::Receiver<QueueEvent>>,
     pub report_rx: Option<mpsc::Receiver<ReportingEvent>>,
@@ -77,6 +74,106 @@ enum StoreOp {
     Console,
     None,
 }
+
+pub const DEFAULT_SETTINGS: &[(&str, &str)] = &[
+    ("queue.quota.size.messages", "100000"),
+    ("queue.quota.size.size", "10737418240"),
+    ("queue.quota.size.enable", "true"),
+    ("queue.limiter.inbound.ip.key", "remote_ip"),
+    ("queue.limiter.inbound.ip.rate", "5/1s"),
+    ("queue.limiter.inbound.ip.enable", "true"),
+    ("queue.limiter.inbound.sender.key.0", "sender_domain"),
+    ("queue.limiter.inbound.sender.key.1", "rcpt"),
+    ("queue.limiter.inbound.sender.rate", "25/1h"),
+    ("queue.limiter.inbound.sender.enable", "true"),
+    ("report.analysis.addresses", "postmaster@*"),
+    ("queue.virtual.local.threads-per-node", "25"),
+    ("queue.virtual.local.description", "Local delivery queue"),
+    ("queue.virtual.remote.threads-per-node", "50"),
+    ("queue.virtual.remote.description", "Remote delivery queue"),
+    ("queue.virtual.dsn.threads-per-node", "5"),
+    (
+        "queue.virtual.dsn.description",
+        "Delivery Status Notification delivery queue",
+    ),
+    ("queue.virtual.report.threads-per-node", "5"),
+    (
+        "queue.virtual.report.description",
+        "DMARC and TLS report delivery queue",
+    ),
+    ("queue.schedule.local.queue-name", "local"),
+    ("queue.schedule.local.retry.0", "2m"),
+    ("queue.schedule.local.retry.1", "5m"),
+    ("queue.schedule.local.retry.2", "10m"),
+    ("queue.schedule.local.retry.3", "15m"),
+    ("queue.schedule.local.retry.4", "30m"),
+    ("queue.schedule.local.retry.5", "1h"),
+    ("queue.schedule.local.retry.6", "2h"),
+    ("queue.schedule.local.notify.0", "1d"),
+    ("queue.schedule.local.notify.1", "3d"),
+    ("queue.schedule.local.expire-type", "ttl"),
+    ("queue.schedule.local.expire", "3d"),
+    (
+        "queue.schedule.local.description",
+        "Local delivery schedule",
+    ),
+    ("queue.schedule.remote.queue-name", "remote"),
+    ("queue.schedule.remote.retry.0", "2m"),
+    ("queue.schedule.remote.retry.1", "5m"),
+    ("queue.schedule.remote.retry.2", "10m"),
+    ("queue.schedule.remote.retry.3", "15m"),
+    ("queue.schedule.remote.retry.4", "30m"),
+    ("queue.schedule.remote.retry.5", "1h"),
+    ("queue.schedule.remote.retry.6", "2h"),
+    ("queue.schedule.remote.notify.0", "1d"),
+    ("queue.schedule.remote.notify.1", "3d"),
+    ("queue.schedule.remote.expire-type", "ttl"),
+    ("queue.schedule.remote.expire", "3d"),
+    (
+        "queue.schedule.remote.description",
+        "Remote delivery schedule",
+    ),
+    ("queue.schedule.dsn.queue-name", "dsn"),
+    ("queue.schedule.dsn.retry.0", "15m"),
+    ("queue.schedule.dsn.retry.1", "30m"),
+    ("queue.schedule.dsn.retry.2", "1h"),
+    ("queue.schedule.dsn.retry.3", "2h"),
+    ("queue.schedule.dsn.expire-type", "attempts"),
+    ("queue.schedule.dsn.max-attempts", "10"),
+    (
+        "queue.schedule.dsn.description",
+        "Delivery Status Notification delivery schedule",
+    ),
+    ("queue.schedule.report.queue-name", "report"),
+    ("queue.schedule.report.retry.0", "30m"),
+    ("queue.schedule.report.retry.1", "1h"),
+    ("queue.schedule.report.retry.2", "2h"),
+    ("queue.schedule.report.expire-type", "attempts"),
+    ("queue.schedule.report.max-attempts", "8"),
+    (
+        "queue.schedule.report.description",
+        "DMARC and TLS report delivery schedule",
+    ),
+    ("queue.tls.invalid-tls.allow-invalid-certs", "true"),
+    (
+        "queue.tls.invalid-tls.description",
+        "Allow invalid TLS certificates",
+    ),
+    ("queue.tls.default.allow-invalid-certs", "false"),
+    ("queue.tls.default.description", "Default TLS settings"),
+    ("queue.route.local.type", "local"),
+    ("queue.route.local.description", "Local delivery route"),
+    ("queue.route.mx.type", "mx"),
+    ("queue.route.mx.limits.multihomed", "2"),
+    ("queue.route.mx.limits.mx", "5"),
+    ("queue.route.mx.ip-lookup", "ipv4_then_ipv6"),
+    ("queue.route.mx.description", "MX delivery route"),
+    ("queue.connection.default.timeout.connect", "5m"),
+    (
+        "queue.connection.default.description",
+        "Default connection settings",
+    ),
+];
 
 impl BootManager {
     pub async fn init() -> Self {
@@ -247,84 +344,29 @@ impl BootManager {
                 }
 
                 // Download Spam filter rules if missing
-                // TODO remove this check in 1.0
-                let update_webadmin = match config.value("version.spam-filter").and_then(|v| {
-                    if !v.is_empty() {
-                        Some(Semver::try_from(v))
-                    } else {
-                        None
-                    }
-                }) {
-                    Some(Err(_)) => {
-                        let _ = manager.clear_prefix("lookup.spam-").await;
-                        let _ = manager
-                            .clear_prefix("sieve.trusted.scripts.spam-filter")
-                            .await;
-                        let _ = manager
-                            .clear_prefix("sieve.trusted.scripts.track-replies")
-                            .await;
-                        let _ = manager.clear_prefix("sieve.trusted.scripts.greylist").await;
-                        let _ = manager.clear_prefix("sieve.trusted.scripts.train").await;
-                        let _ = manager.clear("version.spam-filter").await;
-
-                        match manager.fetch_spam_rules().await {
-                            Ok(external_config) => {
-                                trc::event!(
-                                    Config(trc::ConfigEvent::ImportExternal),
-                                    Version = external_config.version.to_string(),
-                                    Id = "spam-filter"
-                                );
-                                insert_keys.extend(external_config.keys);
-                            }
-                            Err(err) => {
-                                config.new_build_error(
-                                    "*",
-                                    format!("Failed to fetch spam filter: {err}"),
-                                );
-                            }
+                if config.value("version.spam-filter").is_none() {
+                    match manager.fetch_spam_rules().await {
+                        Ok(external_config) => {
+                            trc::event!(
+                                Config(trc::ConfigEvent::ImportExternal),
+                                Version = external_config.version.to_string(),
+                                Id = "spam-filter"
+                            );
+                            insert_keys.extend(external_config.keys);
                         }
-
-                        true
-                    }
-                    Some(Ok(_)) => false,
-                    None => {
-                        match manager.fetch_spam_rules().await {
-                            Ok(external_config) => {
-                                trc::event!(
-                                    Config(trc::ConfigEvent::ImportExternal),
-                                    Version = external_config.version.to_string(),
-                                    Id = "spam-filter"
-                                );
-                                insert_keys.extend(external_config.keys);
-                            }
-                            Err(err) => {
-                                config.new_build_error(
-                                    "*",
-                                    format!("Failed to fetch spam filter: {err}"),
-                                );
-                            }
+                        Err(err) => {
+                            config.new_build_error(
+                                "*",
+                                format!("Failed to fetch spam filter: {err}"),
+                            );
                         }
-
-                        // Add default settings
-                        for key in [
-                            ("queue.quota.size.messages", "100000"),
-                            ("queue.quota.size.size", "10737418240"),
-                            ("queue.quota.size.enable", "true"),
-                            ("queue.limiter.inbound.ip.key", "remote_ip"),
-                            ("queue.limiter.inbound.ip.rate", "5/1s"),
-                            ("queue.limiter.inbound.ip.enable", "true"),
-                            ("queue.limiter.inbound.sender.key.0", "sender_domain"),
-                            ("queue.limiter.inbound.sender.key.1", "rcpt"),
-                            ("queue.limiter.inbound.sender.rate", "25/1h"),
-                            ("queue.limiter.inbound.sender.enable", "true"),
-                            ("report.analysis.addresses", "postmaster@*"),
-                        ] {
-                            insert_keys.push(ConfigKey::from(key));
-                        }
-
-                        false
                     }
-                };
+
+                    // Add default settings
+                    for key in DEFAULT_SETTINGS {
+                        insert_keys.push(ConfigKey::from(*key));
+                    }
+                }
 
                 // Download webadmin if missing
                 if let Some(blob_store) = config
@@ -385,8 +427,14 @@ impl BootManager {
                 let cache = Caches::parse(&mut config);
 
                 // Enable telemetry
+
+                // SPDX-SnippetBegin
+                // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+                // SPDX-License-Identifier: LicenseRef-SEL
                 #[cfg(feature = "enterprise")]
                 telemetry.enable(core.is_enterprise_edition());
+                // SPDX-SnippetEnd
+
                 #[cfg(not(feature = "enterprise"))]
                 telemetry.enable(false);
 
@@ -396,10 +444,10 @@ impl BootManager {
                 );
 
                 // Webadmin auto-update
-                if update_webadmin
-                    || config
-                        .property_or_default::<bool>("webadmin.auto-update", "false")
-                        .unwrap_or_default()
+                // Disabled temporarily until selective updates are implemented
+                /*if config
+                    .property_or_default::<bool>("webadmin.auto-update", "false")
+                    .unwrap_or_default()
                 {
                     if let Err(err) = data.webadmin.update(&core).await {
                         trc::event!(
@@ -408,20 +456,19 @@ impl BootManager {
                             CausedBy = err
                         );
                     }
-                }
+                }*/
 
                 // Spam filter auto-update
                 if config
                     .property_or_default::<bool>("spam-filter.auto-update", "false")
                     .unwrap_or_default()
+                    && let Err(err) = core.storage.config.update_spam_rules(false, false).await
                 {
-                    if let Err(err) = core.storage.config.update_spam_rules(false, false).await {
-                        trc::event!(
-                            Resource(trc::ResourceEvent::Error),
-                            Details = "Failed to update spam-filter",
-                            CausedBy = err
-                        );
-                    }
+                    trc::event!(
+                        Resource(trc::ResourceEvent::Error),
+                        Details = "Failed to update spam-filter",
+                        CausedBy = err
+                    );
                 }
 
                 // Build shared inner
@@ -429,7 +476,7 @@ impl BootManager {
                     core.network.asn_geo_lookup,
                     AsnGeoLookupConfig::Resource { .. }
                 );
-                let (ipc, ipc_rxs) = build_ipc(&mut config, !core.storage.pubsub.is_none());
+                let (ipc, ipc_rxs) = build_ipc(!core.storage.pubsub.is_none());
                 let inner = Arc::new(Inner {
                     shared_core: ArcSwap::from_pointee(core),
                     data,
@@ -492,30 +539,24 @@ impl BootManager {
     }
 }
 
-pub fn build_ipc(config: &mut Config, has_pubsub: bool) -> (Ipc, IpcReceivers) {
+pub fn build_ipc(has_pubsub: bool) -> (Ipc, IpcReceivers) {
     // Build ipc receivers
-    let (state_tx, state_rx) = mpsc::channel(IPC_CHANNEL_BUFFER);
+    let (push_tx, push_rx) = mpsc::channel(IPC_CHANNEL_BUFFER);
     let (housekeeper_tx, housekeeper_rx) = mpsc::channel(IPC_CHANNEL_BUFFER);
     let (queue_tx, queue_rx) = mpsc::channel(IPC_CHANNEL_BUFFER);
     let (report_tx, report_rx) = mpsc::channel(IPC_CHANNEL_BUFFER);
     let (broadcast_tx, broadcast_rx) = mpsc::channel(IPC_CHANNEL_BUFFER);
     (
         Ipc {
-            state_tx,
+            push_tx,
             housekeeper_tx,
             queue_tx,
             report_tx,
             broadcast_tx: has_pubsub.then_some(broadcast_tx),
             task_tx: Arc::new(Notify::new()),
-            local_delivery_sm: Arc::new(Semaphore::new(
-                config
-                    .property_or_default::<usize>("queue.threads.local", "10")
-                    .unwrap_or(10)
-                    .max(1),
-            )),
         },
         IpcReceivers {
-            state_rx: Some(state_rx),
+            push_rx: Some(push_rx),
             housekeeper_rx: Some(housekeeper_rx),
             queue_rx: Some(queue_rx),
             report_rx: Some(report_rx),

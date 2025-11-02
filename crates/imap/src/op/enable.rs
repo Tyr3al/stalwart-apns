@@ -31,6 +31,7 @@ impl<T: SessionStream> Session<T> {
             match capability {
                 Capability::IMAP4rev2 => {
                     self.version = ProtocolVersion::Rev2;
+                    self.is_utf8 = true;
                 }
                 Capability::IMAP4rev1 => {
                     self.version = ProtocolVersion::Rev1;
@@ -42,7 +43,9 @@ impl<T: SessionStream> Session<T> {
                     self.is_qresync = true;
                     self.is_condstore = true;
                 }
-                Capability::Utf8Accept => {}
+                Capability::Utf8Accept => {
+                    self.is_utf8 = true;
+                }
                 _ => {
                     continue;
                 }

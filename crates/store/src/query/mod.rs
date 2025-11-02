@@ -10,6 +10,7 @@ pub mod log;
 pub mod sort;
 
 use roaring::RoaringBitmap;
+use types::{collection::Collection, id::Id};
 
 use crate::{
     BitmapKey, IterateParams, Key,
@@ -56,21 +57,21 @@ pub enum Comparator {
 #[derive(Debug)]
 pub struct ResultSet {
     pub account_id: u32,
-    pub collection: u8,
+    pub collection: Collection,
     pub results: RoaringBitmap,
 }
 
 pub struct SortedResultSet {
     pub position: i32,
-    pub ids: Vec<u64>,
+    pub ids: Vec<Id>,
     pub found_anchor: bool,
 }
 
 impl ResultSet {
-    pub fn new(account_id: u32, collection: impl Into<u8>, results: RoaringBitmap) -> Self {
+    pub fn new(account_id: u32, collection: Collection, results: RoaringBitmap) -> Self {
         ResultSet {
             account_id,
-            collection: collection.into(),
+            collection,
             results,
         }
     }
@@ -138,14 +139,6 @@ impl Filter {
     }
 
     pub fn has_text(field: impl Into<u8>, text: impl Into<String>) -> Self {
-        Filter::HasText {
-            field: field.into(),
-            text: text.into(),
-            tokenize: true,
-        }
-    }
-
-    pub fn has_text_token(field: impl Into<u8>, text: impl Into<String>) -> Self {
         Filter::HasText {
             field: field.into(),
             text: text.into(),

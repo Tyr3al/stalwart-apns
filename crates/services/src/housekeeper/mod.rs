@@ -4,31 +4,33 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::{
-    collections::BinaryHeap,
-    future::Future,
-    sync::Arc,
-    time::{Duration, Instant, SystemTime},
-};
-
 use common::{
     Inner, KV_LOCK_HOUSEKEEPER, LONG_1D_SLUMBER, Server,
     config::telemetry::OtelMetrics,
     core::BuildServer,
     ipc::{BroadcastEvent, HousekeeperEvent, PurgeType},
 };
+use email::message::delete::EmailDeletion;
+use smtp::reporting::SmtpReporting;
+use std::{
+    collections::BinaryHeap,
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime},
+};
+use store::{PurgeStore, write::now};
+use tokio::sync::mpsc;
+use trc::{Collector, MetricType, PurgeEvent};
 
+// SPDX-SnippetBegin
+// SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+// SPDX-License-Identifier: LicenseRef-SEL
 #[cfg(feature = "enterprise")]
 use common::telemetry::{
     metrics::store::{MetricsStore, SharedMetricHistory},
     tracers::store::TracingStore,
 };
-
-use email::message::delete::EmailDeletion;
-use smtp::reporting::SmtpReporting;
-use store::{PurgeStore, write::now};
-use tokio::sync::mpsc;
-use trc::{Collector, MetricType, PurgeEvent};
+// SPDX-SnippetEnd
 
 #[derive(PartialEq, Eq)]
 struct Action {
@@ -42,13 +44,17 @@ enum ActionClass {
     Store(usize),
     Acme(String),
     OtelMetrics,
+    CalculateMetrics,
+    // SPDX-SnippetBegin
+    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+    // SPDX-License-Identifier: LicenseRef-SEL
     #[cfg(feature = "enterprise")]
     InternalMetrics,
-    CalculateMetrics,
     #[cfg(feature = "enterprise")]
     AlertMetrics,
     #[cfg(feature = "enterprise")]
     RenewLicense,
+    // SPDX-SnippetEnd
 }
 
 #[derive(Default)]
@@ -56,8 +62,12 @@ struct Queue {
     heap: BinaryHeap<Action>,
 }
 
+// SPDX-SnippetBegin
+// SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+// SPDX-License-Identifier: LicenseRef-SEL
 #[cfg(feature = "enterprise")]
 const METRIC_ALERTS_INTERVAL: Duration = Duration::from_secs(5 * 60);
+// SPDX-SnippetEnd
 
 pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEvent>) {
     tokio::spawn(async move {
@@ -68,9 +78,10 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
         let mut queue = Queue::default();
         {
             let server = inner.build_server();
+            let roles = &server.core.network.roles;
 
             // Account purge
-            if server.core.network.roles.purge_accounts {
+            if roles.purge_accounts.is_enabled_or_sharded() {
                 queue.schedule(
                     Instant::now() + server.core.jmap.account_purge_frequency.time_to_next(),
                     ActionClass::Account,
@@ -78,7 +89,7 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
             }
 
             // Store purges
-            if server.core.network.roles.purge_stores {
+            if roles.purge_stores.is_enabled_or_sharded() {
                 for (idx, schedule) in server.core.storage.purge_schedules.iter().enumerate() {
                     queue.schedule(
                         Instant::now() + schedule.cron.time_to_next(),
@@ -88,19 +99,19 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
             }
 
             // OTEL Push Metrics
-            if server.core.network.roles.push_metrics {
-                if let Some(otel) = &server.core.metrics.otel {
-                    OtelMetrics::enable_errors();
-                    queue.schedule(Instant::now() + otel.interval, ActionClass::OtelMetrics);
-                }
+            if roles.push_metrics.is_enabled_or_sharded()
+                && let Some(otel) = &server.core.metrics.otel
+            {
+                OtelMetrics::enable_errors();
+                queue.schedule(Instant::now() + otel.interval, ActionClass::OtelMetrics);
             }
 
             // Calculate expensive metrics
             queue.schedule(Instant::now(), ActionClass::CalculateMetrics);
 
             // Add all ACME renewals to heap
-            if server.core.network.roles.renew_acme {
-                for provider in server.core.acme.providers.values() {
+            for provider in server.core.acme.providers.values() {
+                if roles.renew_acme.is_enabled_for_hash(&provider.id) {
                     match server.init_acme(provider).await {
                         Ok(renew_at) => {
                             queue.schedule(
@@ -143,12 +154,18 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
                     );
                 }
             }
+
             // SPDX-SnippetEnd
         }
 
+        // SPDX-SnippetBegin
+        // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+        // SPDX-License-Identifier: LicenseRef-SEL
         // Metrics history
         #[cfg(feature = "enterprise")]
         let metrics_history = SharedMetricHistory::default();
+        // SPDX-SnippetEnd
+
         let mut next_metric_update = Instant::now();
 
         loop {
@@ -183,13 +200,13 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
                                     );
                                 }
 
-                                if let Some(metrics_store) = enterprise.metrics_store.as_ref() {
-                                    if !queue.has_action(&ActionClass::InternalMetrics) {
-                                        queue.schedule(
-                                            Instant::now() + metrics_store.interval.time_to_next(),
-                                            ActionClass::InternalMetrics,
-                                        );
-                                    }
+                                if let Some(metrics_store) = enterprise.metrics_store.as_ref()
+                                    && !queue.has_action(&ActionClass::InternalMetrics)
+                                {
+                                    queue.schedule(
+                                        Instant::now() + metrics_store.interval.time_to_next(),
+                                        ActionClass::InternalMetrics,
+                                    );
                                 }
 
                                 if !enterprise.metrics_alerts.is_empty()
@@ -199,6 +216,15 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
                                 }
                             }
                             // SPDX-SnippetEnd
+
+                            // Reload queue settings
+                            server
+                                .inner
+                                .ipc
+                                .queue_tx
+                                .send(common::ipc::QueueEvent::ReloadSettings)
+                                .await
+                                .ok();
 
                             // Reload ACME certificates
                             tokio::spawn(async move {
@@ -318,7 +344,15 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
                                     ActionClass::Account,
                                 );
                                 tokio::spawn(async move {
-                                    server.purge(PurgeType::Account(None), 0).await;
+                                    server
+                                        .purge(
+                                            PurgeType::Account {
+                                                account_id: None,
+                                                use_roles: true,
+                                            },
+                                            0,
+                                        )
+                                        .await;
                                 });
                             }
                             ActionClass::Store(idx) => {
@@ -374,8 +408,12 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
 
                                     let otel = otel.clone();
 
+                                    // SPDX-SnippetBegin
+                                    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+                                    // SPDX-License-Identifier: LicenseRef-SEL
                                     #[cfg(feature = "enterprise")]
                                     let is_enterprise = server.is_enterprise_edition();
+                                    // SPDX-SnippetEnd
 
                                     #[cfg(not(feature = "enterprise"))]
                                     let is_enterprise = false;
@@ -394,7 +432,7 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
                                 // Calculate expensive metrics every 5 minutes
                                 queue.schedule(
                                     Instant::now() + Duration::from_secs(5 * 60),
-                                    ActionClass::OtelMetrics,
+                                    ActionClass::CalculateMetrics,
                                 );
 
                                 let update_other_metrics = if Instant::now() >= next_metric_update {
@@ -407,7 +445,16 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
 
                                 let server = server.clone();
                                 tokio::spawn(async move {
-                                    if server.core.network.roles.calculate_metrics {
+                                    if server
+                                        .core
+                                        .network
+                                        .roles
+                                        .calculate_metrics
+                                        .is_enabled_or_sharded()
+                                    {
+                                        // SPDX-SnippetBegin
+                                        // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+                                        // SPDX-License-Identifier: LicenseRef-SEL
                                         #[cfg(feature = "enterprise")]
                                         if server.is_enterprise_edition() {
                                             // Obtain queue size
@@ -425,6 +472,7 @@ pub fn spawn_housekeeper(inner: Arc<Inner>, mut rx: mpsc::Receiver<HousekeeperEv
                                                 }
                                             }
                                         }
+                                        // SPDX-SnippetEnd
 
                                         if update_other_metrics {
                                             match server.total_accounts().await {
@@ -632,7 +680,7 @@ impl Purge for Server {
                     .into(),
             ),
             PurgeType::Lookup { .. } => ("in-memory-prefix", None),
-            PurgeType::Account(_) => ("account", None),
+            PurgeType::Account { .. } => ("account", None),
         };
         if let Some(lock_name) = &lock_name {
             match self
@@ -686,17 +734,17 @@ impl Purge for Server {
                 // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
                 // SPDX-License-Identifier: LicenseRef-SEL
                 #[cfg(feature = "enterprise")]
-                if let Some(trace_retention) = trace_retention {
-                    if let Err(err) = store.purge_spans(trace_retention).await {
-                        trc::error!(err.details("Failed to purge tracing spans"));
-                    }
+                if let Some(trace_retention) = trace_retention
+                    && let Err(err) = store.purge_spans(trace_retention).await
+                {
+                    trc::error!(err.details("Failed to purge tracing spans"));
                 }
 
                 #[cfg(feature = "enterprise")]
-                if let Some(metrics_retention) = metrics_retention {
-                    if let Err(err) = store.purge_metrics(metrics_retention).await {
-                        trc::error!(err.details("Failed to purge metrics"));
-                    }
+                if let Some(metrics_retention) = metrics_retention
+                    && let Err(err) = store.purge_metrics(metrics_retention).await
+                {
+                    trc::error!(err.details("Failed to purge metrics"));
                 }
                 // SPDX-SnippetEnd
             }
@@ -717,11 +765,14 @@ impl Purge for Server {
                     trc::error!(err.details("Failed to purge in-memory store"));
                 }
             }
-            PurgeType::Account(account_id) => {
+            PurgeType::Account {
+                account_id,
+                use_roles,
+            } => {
                 if let Some(account_id) = account_id {
                     self.purge_account(account_id).await;
                 } else {
-                    self.purge_accounts().await;
+                    self.purge_accounts(use_roles).await;
                 }
             }
         }
@@ -734,17 +785,16 @@ impl Purge for Server {
         );
 
         // Remove lock
-        if let Some(lock_name) = &lock_name {
-            if let Err(err) = self
+        if let Some(lock_name) = &lock_name
+            && let Err(err) = self
                 .in_memory_store()
                 .remove_lock(KV_LOCK_HOUSEKEEPER, lock_name)
                 .await
-            {
-                trc::error!(
-                    err.details("Failed to delete task lock.")
-                        .details(lock_type)
-                );
-            }
+        {
+            trc::error!(
+                err.details("Failed to delete task lock.")
+                    .details(lock_type)
+            );
         }
     }
 }

@@ -17,8 +17,8 @@ use store::{
     write::{BatchBuilder, ValueClass},
 };
 use trc::AddContext;
+use types::semver::Semver;
 use utils::{
-    Semver,
     config::{Config, ConfigKey},
     glob::GlobPattern,
 };
@@ -36,13 +36,13 @@ pub struct Patterns {
     patterns: Vec<Pattern>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum Pattern {
     Include(MatchType),
     Exclude(MatchType),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MatchType {
     Equal(String),
     StartsWith(String),
@@ -538,6 +538,12 @@ impl Patterns {
                 Pattern::Include(MatchType::Equal("storage.directory".to_string())),
                 Pattern::Include(MatchType::Equal("enterprise.license-key".to_string())),
             ];
+        } else if !cfg_local_patterns.contains(&Pattern::Include(MatchType::StartsWith(
+            "config.local-keys.".to_string(),
+        ))) {
+            cfg_local_patterns.push(Pattern::Include(MatchType::StartsWith(
+                "config.local-keys.".to_string(),
+            )));
         }
 
         Patterns {

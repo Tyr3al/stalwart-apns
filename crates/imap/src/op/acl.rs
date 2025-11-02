@@ -4,16 +4,18 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::{sync::Arc, time::Instant};
-
+use crate::{
+    core::{MailboxId, Session, SessionData, State},
+    op::ImapContext,
+    spawn_op,
+};
 use common::{
     auth::AccessToken, listener::SessionStream, sharing::EffectiveAcl,
     storage::index::ObjectIndexBuilder,
 };
-
 use compact_str::ToCompactString;
 use directory::{
-    Permission, QueryBy, Type,
+    Permission, QueryParams, Type,
     backend::internal::{
         PrincipalField,
         manage::{ChangedPrincipals, ManageDirectory},
@@ -26,26 +28,23 @@ use imap_proto::{
     },
     receiver::Request,
 };
-
-use jmap_proto::types::{acl::Acl, collection::Collection, value::AclGrant};
+use std::{sync::Arc, time::Instant};
 use store::write::{AlignedBytes, Archive, BatchBuilder};
 use trc::AddContext;
-use utils::map::bitmap::Bitmap;
-
-use crate::{
-    core::{MailboxId, Session, SessionData, State},
-    op::ImapContext,
-    spawn_op,
+use types::{
+    acl::{Acl, AclGrant},
+    collection::Collection,
 };
+use utils::map::bitmap::Bitmap;
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_get_acl(&mut self, request: Request<Command>) -> trc::Result<()> {
         // Validate access
-        self.assert_has_permission(Permission::ImapAuthenticate)?;
+        self.assert_has_permission(Permission::ImapAclGet)?;
 
         let op_start = Instant::now();
-        let arguments = request.parse_acl(self.version)?;
-        let is_rev2 = self.version.is_rev2();
+        let arguments = request.parse_acl(self.is_utf8)?;
+        let is_utf8 = self.version.is_rev2() || self.is_utf8;
         let data = self.state.session_data();
 
         spawn_op!(data, {
@@ -58,7 +57,32 @@ impl<T: SessionStream> Session<T> {
                 .to_unarchived::<email::mailbox::Mailbox>()
                 .imap_ctx(&arguments.tag, trc::location!())?;
 
+            // Add the current user if they are the owner or a group member
+            if data.access_token.is_member(mailbox_id.account_id) {
+                permissions.push((
+                    data.access_token.name.clone(),
+                    vec![
+                        Rights::Read,
+                        Rights::Lookup,
+                        Rights::Insert,
+                        Rights::DeleteMessages,
+                        Rights::Expunge,
+                        Rights::Seen,
+                        Rights::Write,
+                        Rights::CreateMailbox,
+                        Rights::DeleteMailbox,
+                        Rights::Post,
+                        Rights::Administer,
+                    ],
+                ));
+            }
+
             for item in mailbox.inner.acls.iter() {
+                if item.account_id == mailbox_id.account_id {
+                    // Skip the current user, as they are already added above
+                    continue;
+                }
+
                 if let Some(account_name) = data
                     .server
                     .store()
@@ -96,7 +120,7 @@ impl<T: SessionStream> Session<T> {
                             Acl::CreateChild => {
                                 rights.push(Rights::CreateMailbox);
                             }
-                            Acl::Administer => {
+                            Acl::Share => {
                                 rights.push(Rights::Administer);
                             }
                             Acl::Submit => {
@@ -128,7 +152,7 @@ impl<T: SessionStream> Session<T> {
                             mailbox_name: arguments.mailbox_name.to_string(),
                             permissions,
                         }
-                        .into_bytes(is_rev2),
+                        .into_bytes(is_utf8),
                     ),
             )
             .await
@@ -140,9 +164,9 @@ impl<T: SessionStream> Session<T> {
         self.assert_has_permission(Permission::ImapMyRights)?;
 
         let op_start = Instant::now();
-        let arguments = request.parse_acl(self.version)?;
+        let arguments = request.parse_acl(self.is_utf8)?;
         let data = self.state.session_data();
-        let is_rev2 = self.version.is_rev2();
+        let is_utf8 = self.version.is_rev2() || self.is_utf8;
 
         spawn_op!(data, {
             let (mailbox_id, mailbox_, access_token) = data
@@ -192,6 +216,7 @@ impl<T: SessionStream> Session<T> {
                     Rights::CreateMailbox,
                     Rights::DeleteMailbox,
                     Rights::Post,
+                    Rights::Administer,
                 ]
             };
 
@@ -216,7 +241,7 @@ impl<T: SessionStream> Session<T> {
                             mailbox_name: arguments.mailbox_name.to_string(),
                             rights,
                         }
-                        .into_bytes(is_rev2),
+                        .into_bytes(is_utf8),
                     ),
             )
             .await
@@ -229,7 +254,7 @@ impl<T: SessionStream> Session<T> {
 
         let op_start = Instant::now();
         let command = request.command;
-        let arguments = request.parse_acl(self.version)?;
+        let arguments = request.parse_acl(self.is_utf8)?;
         let data = self.state.session_data();
 
         spawn_op!(data, {
@@ -248,7 +273,10 @@ impl<T: SessionStream> Session<T> {
                 .core
                 .storage
                 .directory
-                .query(QueryBy::Name(arguments.identifier.as_ref().unwrap()), false)
+                .query(
+                    QueryParams::name(arguments.identifier.as_ref().unwrap())
+                        .with_return_member_of(false),
+                )
                 .await
                 .imap_ctx(&arguments.tag, trc::location!())?
                 .ok_or_else(|| {
@@ -313,6 +341,13 @@ impl<T: SessionStream> Session<T> {
                 }
             }
 
+            if mailbox.acls.len() > data.server.core.groupware.max_shares_per_item {
+                return Err(trc::ImapEvent::Error
+                    .into_err()
+                    .details("Maximum shares per item exceeded")
+                    .caused_by(trc::location!()));
+            }
+
             let grants = mailbox
                 .acls
                 .iter()
@@ -341,7 +376,7 @@ impl<T: SessionStream> Session<T> {
 
             // Invalidate ACLs
             data.server
-                .increment_token_revision(ChangedPrincipals::from_change(
+                .invalidate_principal_caches(ChangedPrincipals::from_change(
                     acl_account_id,
                     Type::Individual,
                     PrincipalField::EnabledPermissions,
@@ -372,7 +407,7 @@ impl<T: SessionStream> Session<T> {
         self.assert_has_permission(Permission::ImapListRights)?;
 
         let op_start = Instant::now();
-        let arguments = request.parse_acl(self.version)?;
+        let arguments = request.parse_acl(self.is_utf8)?;
 
         trc::event!(
             Imap(trc::ImapEvent::ListRights),
@@ -400,7 +435,7 @@ impl<T: SessionStream> Session<T> {
                             vec![Rights::Administer],
                         ],
                     }
-                    .into_bytes(self.version.is_rev2()),
+                    .into_bytes(self.version.is_rev2() || self.is_utf8),
                 ),
         )
         .await
@@ -437,7 +472,7 @@ impl<T: SessionStream> SessionData<T> {
                         .caused_by(trc::location!())?
                         .acls
                         .effective_acl(&access_token)
-                        .contains(Acl::Administer)
+                        .contains(Acl::Share)
                 {
                     Ok((mailbox, values, access_token))
                 } else {

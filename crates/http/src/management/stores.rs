@@ -17,22 +17,28 @@ use directory::{
     backend::internal::manage::{self, ManageDirectory},
 };
 use email::message::{ingest::EmailIngest, metadata::MessageData};
+use http_proto::{request::decode_path_element, *};
 use hyper::Method;
-use jmap_proto::types::{collection::Collection, property::Property};
 use serde_json::json;
 use services::task_manager::fts::FtsIndexTask;
+use std::future::Future;
 use store::{
     Serialize, rand,
     write::{Archiver, BatchBuilder, ValueClass},
 };
 use trc::AddContext;
+use types::{
+    collection::Collection,
+    field::{EmailField, MailboxField},
+};
 use utils::url_params::UrlParams;
 
-use http_proto::{request::decode_path_element, *};
-
+// SPDX-SnippetBegin
+// SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+// SPDX-License-Identifier: LicenseRef-SEL
 #[cfg(feature = "enterprise")]
 use super::enterprise::undelete::UndeleteApi;
-use std::future::Future;
+// SPDX-SnippetEnd
 
 pub trait ManageStore: Sync + Send {
     fn handle_manage_store(
@@ -206,8 +212,11 @@ impl ManageStore for Server {
                     None
                 };
 
-                self.housekeeper_request(HousekeeperEvent::Purge(PurgeType::Account(account_id)))
-                    .await
+                self.housekeeper_request(HousekeeperEvent::Purge(PurgeType::Account {
+                    account_id,
+                    use_roles: false,
+                }))
+                .await
             }
             (Some("reindex"), id, None, &Method::GET) => {
                 // Validate the access token
@@ -351,7 +360,7 @@ pub async fn reset_imap_uids(server: &Server, account_id: u32) -> trc::Result<(u
                     .with_changes(new_mailbox),
             )
             .caused_by(trc::location!())?
-            .clear(Property::EmailIds);
+            .clear(MailboxField::UidCounter);
         server
             .store()
             .write(batch.build_all())
@@ -396,9 +405,9 @@ pub async fn reset_imap_uids(server: &Server, account_id: u32) -> trc::Result<(u
             .with_account_id(account_id)
             .with_collection(Collection::Email)
             .update_document(message_id)
-            .assert_value(ValueClass::Property(Property::Value.into()), &data)
+            .assert_value(ValueClass::Property(EmailField::Archive.into()), &data)
             .set(
-                Property::Value,
+                EmailField::Archive,
                 Archiver::new(new_data)
                     .serialize()
                     .caused_by(trc::location!())?,

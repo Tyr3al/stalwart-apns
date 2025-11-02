@@ -58,9 +58,12 @@ impl LdapFilter {
                 LdapFilterItem::Static(s) => result.push_str(s),
                 LdapFilterItem::Full => result.push_str(ldap_escape(value).as_ref()),
                 LdapFilterItem::LocalPart => {
-                    if let Some((value, _)) = value.rsplit_once('@') {
-                        result.push_str(value);
-                    }
+                    result.push_str(
+                        value
+                            .rsplit_once('@')
+                            .map(|(local, _)| local)
+                            .unwrap_or(value),
+                    );
                 }
                 LdapFilterItem::DomainPart => {
                     if let Some((_, domain)) = value.rsplit_once('@') {

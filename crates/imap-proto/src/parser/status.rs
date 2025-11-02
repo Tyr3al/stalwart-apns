@@ -7,13 +7,13 @@
 use compact_str::{CompactString, ToCompactString};
 
 use crate::Command;
+use crate::protocol::status;
 use crate::protocol::status::Status;
-use crate::protocol::{ProtocolVersion, status};
 use crate::receiver::{Request, Token, bad};
 use crate::utf7::utf7_maybe_decode;
 
 impl Request<Command> {
-    pub fn parse_status(self, version: ProtocolVersion) -> trc::Result<status::Arguments> {
+    pub fn parse_status(self, is_utf8: bool) -> trc::Result<status::Arguments> {
         match self.tokens.len() {
             0..=3 => Err(self.into_error("Missing arguments.")),
             len => {
@@ -24,7 +24,7 @@ impl Request<Command> {
                         .unwrap()
                         .unwrap_string()
                         .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                    version,
+                    is_utf8,
                 );
                 let mut items = Vec::with_capacity(len - 2);
 
@@ -100,10 +100,7 @@ impl Status {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        protocol::{ProtocolVersion, status},
-        receiver::Receiver,
-    };
+    use crate::{protocol::status, receiver::Receiver};
 
     #[test]
     fn parse_status() {
@@ -117,7 +114,7 @@ mod tests {
                         .iter()
                 )
                 .unwrap()
-                .parse_status(ProtocolVersion::Rev2)
+                .parse_status(true)
                 .unwrap(),
             status::Arguments {
                 tag: "A042".into(),

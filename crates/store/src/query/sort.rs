@@ -4,14 +4,12 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::cmp::Ordering;
-
-use ahash::{AHashMap, AHashSet};
-use trc::AddContext;
-
-use crate::{IndexKeyPrefix, IterateParams, Store, U32_LEN, write::key::DeserializeBigEndian};
-
 use super::{Comparator, ResultSet, SortedResultSet};
+use crate::{IndexKeyPrefix, IterateParams, Store, U32_LEN, write::key::DeserializeBigEndian};
+use ahash::{AHashMap, AHashSet};
+use std::cmp::Ordering;
+use trc::AddContext;
+use types::id::Id;
 
 #[derive(Debug)]
 pub struct Pagination<'x> {
@@ -22,7 +20,7 @@ pub struct Pagination<'x> {
     anchor_offset: i32,
     has_anchor: bool,
     anchor_found: bool,
-    pub ids: Vec<u64>,
+    pub ids: Vec<Id>,
     prefix_map: Option<&'x AHashMap<u32, u32>>,
     prefix_unique: bool,
 }
@@ -50,17 +48,18 @@ impl Store {
             match comparators.pop().unwrap() {
                 Comparator::Field { field, ascending } => {
                     let mut results = result_set.results;
+                    let collection = u8::from(result_set.collection);
 
                     self.iterate(
                         IterateParams::new(
                             IndexKeyPrefix {
                                 account_id: result_set.account_id,
-                                collection: result_set.collection,
+                                collection,
                                 field,
                             },
                             IndexKeyPrefix {
                                 account_id: result_set.account_id,
-                                collection: result_set.collection,
+                                collection,
                                 field: field + 1,
                             },
                         )
@@ -126,8 +125,9 @@ impl Store {
             let mut sorted_results = paginate.build();
             if let Some(prefix_map) = prefix_map {
                 for id in sorted_results.ids.iter_mut() {
-                    if let Some(prefix_id) = prefix_map.get(&(*id as u32)) {
-                        *id |= (*prefix_id as u64) << 32;
+                    let document_id = id.document_id();
+                    if let Some(prefix_id) = prefix_map.get(&document_id) {
+                        *id = Id::from_parts(*prefix_id, document_id);
                     }
                 }
             }
@@ -144,17 +144,18 @@ impl Store {
                         let mut prev_data = vec![];
                         let mut has_grouped_ids = false;
                         let mut idx = 0;
+                        let collection = u8::from(result_set.collection);
 
                         self.iterate(
                             IterateParams::new(
                                 IndexKeyPrefix {
                                     account_id: result_set.account_id,
-                                    collection: result_set.collection,
+                                    collection,
                                     field,
                                 },
                                 IndexKeyPrefix {
                                     account_id: result_set.account_id,
-                                    collection: result_set.collection,
+                                    collection,
                                     field: field + 1,
                                 },
                             )
@@ -320,8 +321,13 @@ impl<'x> Pagination<'x> {
         self
     }
 
+    #[inline(always)]
     pub fn add(&mut self, prefix_id: u32, document_id: u32) -> bool {
-        let id = ((prefix_id as u64) << 32) | document_id as u64;
+        self.add_id(Id::from_parts(prefix_id, document_id))
+    }
+
+    pub fn add_id(&mut self, id: Id) -> bool {
+        let document_id = id.document_id();
 
         // Pagination
         if !self.has_anchor {

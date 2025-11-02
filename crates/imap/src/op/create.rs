@@ -9,9 +9,7 @@ use crate::{
     op::ImapContext,
     spawn_op,
 };
-use common::{
-    config::jmap::settings::SpecialUse, listener::SessionStream, storage::index::ObjectIndexBuilder,
-};
+use common::{listener::SessionStream, storage::index::ObjectIndexBuilder};
 use directory::Permission;
 use email::cache::{MessageCacheFetch, mailbox::MailboxCacheAccess};
 use imap_proto::{
@@ -19,10 +17,10 @@ use imap_proto::{
     protocol::{create::Arguments, list::Attribute},
     receiver::Request,
 };
-use jmap_proto::types::{acl::Acl, collection::Collection, id::Id};
 use std::time::Instant;
 use store::write::BatchBuilder;
 use trc::AddContext;
+use types::{acl::Acl, collection::Collection, id::Id, special_use::SpecialUse};
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_create(&mut self, requests: Vec<Request<Command>>) -> trc::Result<()> {
@@ -30,11 +28,11 @@ impl<T: SessionStream> Session<T> {
         self.assert_has_permission(Permission::ImapCreate)?;
 
         let data = self.state.session_data();
-        let version = self.version;
+        let is_utf8 = self.is_utf8;
 
         spawn_op!(data, {
             for request in requests {
-                match request.parse_create(version) {
+                match request.parse_create(is_utf8) {
                     Ok(argument) => match data.create_folder(argument).await {
                         Ok(response) => {
                             data.write_bytes(response.into_bytes()).await?;
@@ -85,10 +83,10 @@ impl<T: SessionStream> SessionData<T> {
         for (pos, &path_item) in params.path.iter().enumerate() {
             let mut mailbox = email::mailbox::Mailbox::new(path_item).with_parent_id(parent_id);
 
-            if pos == params.path.len() - 1 {
-                if let Some(mailbox_role) = arguments.mailbox_role.map(attr_to_role) {
-                    mailbox.role = mailbox_role;
-                }
+            if pos == params.path.len() - 1
+                && let Some(mailbox_role) = arguments.mailbox_role.map(attr_to_role)
+            {
+                mailbox.role = mailbox_role;
             }
             let mailbox_id = next_document_id;
             next_document_id -= 1;
@@ -188,13 +186,14 @@ impl<T: SessionStream> SessionData<T> {
                             .details("Mailboxes under root shared folders are not allowed.")
                             .code(ResponseCode::Cannot));
                     }
+
                     // Build path
                     let root = &mut path[2];
                     if root.eq_ignore_ascii_case("INBOX") {
                         *root = "INBOX";
                     }
                     let full_path = path.join("/");
-                    let prefix = Some(format!("{}/{}", path.remove(0), path.remove(0)));
+                    let prefix = Some(format!("{}/{}", path[0], path[1]));
 
                     // Locate account
                     if let Some(account) = mailboxes

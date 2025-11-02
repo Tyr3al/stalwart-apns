@@ -4,15 +4,13 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::{Error, RawElement, Token, UnexpectedToken, XmlValueParser};
+use crate::schema::{Attribute, AttributeValue, Element, NamedElement, Namespace};
 use quick_xml::{
     events::{attributes::AttrError, Event},
     name::ResolveResult,
     NsReader,
 };
-
-use crate::schema::{Attribute, AttributeValue, Element, NamedElement, Namespace};
-
-use super::{Error, RawElement, Token, UnexpectedToken, XmlValueParser};
 
 pub struct Tokenizer<'x> {
     xml: NsReader<&'x [u8]>,
@@ -22,14 +20,14 @@ pub struct Tokenizer<'x> {
 impl<'x> Tokenizer<'x> {
     pub fn new(input: &'x [u8]) -> Self {
         let mut xml = NsReader::from_reader(input);
-        xml.config_mut().trim_text(true);
+        xml.config_mut();
         Self {
             xml,
             last_is_end: false,
         }
     }
 
-    pub fn token(&mut self) -> super::Result<Token> {
+    pub fn token(&'_ mut self) -> super::Result<Token<'_>> {
         loop {
             if self.last_is_end {
                 self.last_is_end = false;
@@ -48,9 +46,28 @@ impl<'x> Tokenizer<'x> {
                 }
                 Event::Text(text) if text.iter().any(|ch| !ch.is_ascii_whitespace()) => {
                     return text
-                        .unescape()
+                        .xml_content()
                         .map(Token::Text)
-                        .map_err(|err| Error::Xml(Box::new(err)));
+                        .map_err(|err| Error::Xml(Box::new(err.into())));
+                }
+                Event::GeneralRef(entity) => {
+                    hashify::fnc_map!(entity.as_ref(),
+                        b"lt" => { return Ok(Token::Text("<".into())); },
+                        b"gt" => { return Ok(Token::Text(">".into())); },
+                        b"amp" => { return Ok(Token::Text("&".into())); },
+                        b"apos" => { return Ok(Token::Text("'".into())); },
+                        b"quot" => { return Ok(Token::Text("\"".into())); },
+                        _ => {
+                            if let Ok(Some(gr)) = entity.resolve_char_ref() {
+                                return Ok(Token::Text(gr.to_string().into()));
+                            }
+                        }
+                    );
+
+                    return entity
+                        .xml_content()
+                        .map(Token::Text)
+                        .map_err(|err| Error::Xml(Box::new(err.into())));
                 }
                 Event::CData(bytes) => return Ok(Token::Bytes(bytes.into_inner())),
                 Event::Eof => return Ok(Token::Eof),
@@ -158,7 +175,7 @@ impl<'x> Tokenizer<'x> {
 
     pub fn collect_string_value(&mut self) -> super::Result<Option<String>> {
         let mut depth = 1;
-        let mut value = None;
+        let mut value: Option<String> = None;
 
         loop {
             match self.token()? {
@@ -170,10 +187,18 @@ impl<'x> Tokenizer<'x> {
                     }
                 }
                 Token::Text(text) => {
-                    value = Some(text.into_owned());
+                    if let Some(ref mut v) = value {
+                        v.push_str(&text);
+                    } else {
+                        value = Some(text.into_owned());
+                    }
                 }
                 Token::Bytes(bytes) => {
-                    value = Some(String::from_utf8_lossy(&bytes).into_owned());
+                    if let Some(ref mut v) = value {
+                        v.push_str(&String::from_utf8_lossy(&bytes));
+                    } else {
+                        value = Some(String::from_utf8_lossy(&bytes).into_owned());
+                    }
                 }
                 Token::Eof => return Err(Token::Eof.into_unexpected()),
             }

@@ -33,11 +33,7 @@ impl Directories {
     ) -> Self {
         let mut directories = AHashMap::new();
 
-        for id in config
-            .sub_keys("directory", ".type")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("directory", ".type") {
             // Parse directory
             let id = id.as_str();
             #[cfg(feature = "test_mode")]
@@ -95,6 +91,9 @@ impl Directories {
 
             // Build directory
             if let Some(store) = store {
+                // SPDX-SnippetBegin
+                // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+                // SPDX-License-Identifier: LicenseRef-SEL
                 #[cfg(feature = "enterprise")]
                 if store.is_enterprise_directory() && !is_enterprise {
                     let message =
@@ -102,6 +101,7 @@ impl Directories {
                     config.new_parse_error(("directory", id, "type"), message);
                     continue;
                 }
+                // SPDX-SnippetEnd
 
                 let directory = Arc::new(Directory {
                     store,

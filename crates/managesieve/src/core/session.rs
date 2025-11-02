@@ -42,13 +42,12 @@ impl SessionManager for ManageSieveSessionManager {
                 .is_ok()
                 && session.handle_conn().await
                 && session.instance.acceptor.is_tls()
+                && let Ok(mut session) = session.into_tls().await
             {
-                if let Ok(mut session) = session.into_tls().await {
-                    let _ = session
-                        .write(&session.handle_capability(SERVER_GREETING).await.unwrap())
-                        .await;
-                    session.handle_conn().await;
-                }
+                let _ = session
+                    .write(&session.handle_capability(SERVER_GREETING).await.unwrap())
+                    .await;
+                session.handle_conn().await;
             }
         }
     }

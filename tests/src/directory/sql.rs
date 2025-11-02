@@ -5,7 +5,7 @@
  */
 
 use directory::{
-    QueryBy, ROLE_USER, Type,
+    QueryParams, ROLE_ADMIN, ROLE_USER, Type,
     backend::{RcptType, internal::manage::ManageDirectory},
 };
 use mail_send::Credentials;
@@ -113,11 +113,11 @@ async fn sql_directory() {
         assert_eq!(
             handle
                 .query(
-                    QueryBy::Credentials(&Credentials::Plain {
+                    QueryParams::credentials(&Credentials::Plain {
                         username: "john".into(),
                         secret: "12345".into()
-                    }),
-                    true
+                    })
+                    .with_return_member_of(true)
                 )
                 .await
                 .unwrap()
@@ -146,11 +146,11 @@ async fn sql_directory() {
         assert_eq!(
             handle
                 .query(
-                    QueryBy::Credentials(&Credentials::Plain {
+                    QueryParams::credentials(&Credentials::Plain {
                         username: "bill".into(),
                         secret: "password".into()
-                    }),
-                    true
+                    })
+                    .with_return_member_of(true)
                 )
                 .await
                 .unwrap()
@@ -173,11 +173,11 @@ async fn sql_directory() {
         assert_eq!(
             handle
                 .query(
-                    QueryBy::Credentials(&Credentials::Plain {
+                    QueryParams::credentials(&Credentials::Plain {
                         username: "admin".into(),
                         secret: "very_secret".into()
-                    }),
-                    true
+                    })
+                    .with_return_member_of(true)
                 )
                 .await
                 .unwrap()
@@ -189,18 +189,18 @@ async fn sql_directory() {
                 description: Some("Administrator".into()),
                 secrets: vec!["very_secret".into()],
                 typ: Type::Individual,
-                roles: vec![ROLE_USER.to_string()],
+                roles: vec![ROLE_ADMIN.to_string()],
                 ..Default::default()
             }
         );
         assert!(
             handle
                 .query(
-                    QueryBy::Credentials(&Credentials::Plain {
+                    QueryParams::credentials(&Credentials::Plain {
                         username: "bill".into(),
                         secret: "invalid".into()
-                    }),
-                    true
+                    })
+                    .with_return_member_of(true)
                 )
                 .await
                 .unwrap()
@@ -208,13 +208,15 @@ async fn sql_directory() {
         );
 
         // Get user by name
+        let mut p = handle
+            .query(QueryParams::name("jane").with_return_member_of(true))
+            .await
+            .unwrap()
+            .unwrap()
+            .into_test();
+        p.member_of.sort();
         assert_eq!(
-            handle
-                .query(QueryBy::Name("jane"), true)
-                .await
-                .unwrap()
-                .unwrap()
-                .into_test(),
+            p,
             TestPrincipal {
                 id: base_store.get_principal_id("jane").await.unwrap().unwrap(),
                 name: "jane".into(),
@@ -235,7 +237,7 @@ async fn sql_directory() {
         // Get group by name
         assert_eq!(
             handle
-                .query(QueryBy::Name("sales"), true)
+                .query(QueryParams::name("sales").with_return_member_of(true))
                 .await
                 .unwrap()
                 .unwrap()

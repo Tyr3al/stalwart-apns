@@ -4,111 +4,96 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use crate::{
+    outbound::DeliveryResult,
+    queue::{
+        Error, ErrorDetails, FROM_AUTHENTICATED, FROM_UNAUTHENTICATED_DMARC, HostResponse,
+        MessageSource, MessageWrapper, Status, UnexpectedResponse, quota::HasQueueQuota,
+        spool::SmtpSpool,
+    },
+    reporting::SmtpReporting,
+};
 use common::Server;
 use email::message::delivery::{IngestMessage, LocalDeliveryStatus, MailDelivery};
 use smtp_proto::Response;
 use trc::SieveEvent;
 
-use crate::{
-    queue::{
-        DMARC_AUTHENTICATED, DomainPart, Error, ErrorDetails, HostResponse, Message, MessageSource,
-        RCPT_STATUS_CHANGED, Recipient, Status, quota::HasQueueQuota, spool::SmtpSpool,
-    },
-    reporting::SmtpReporting,
-};
-
-impl Message {
-    pub async fn deliver_local(
+impl MessageWrapper {
+    pub(super) async fn deliver_local(
         &self,
-        recipients: impl Iterator<Item = &mut Recipient>,
+        rcpt_idxs: &[usize],
+        statuses: &mut Vec<DeliveryResult>,
         server: &Server,
-    ) -> Status<(), Error> {
+    ) {
         // Prepare recipients list
-        let mut total_rcpt = 0;
-        let mut total_completed = 0;
         let mut pending_recipients = Vec::new();
         let mut recipient_addresses = Vec::new();
-        for rcpt in recipients {
-            total_rcpt += 1;
-            if matches!(
-                &rcpt.status,
-                Status::Completed(_) | Status::PermanentFailure(_)
-            ) {
-                total_completed += 1;
-                continue;
-            }
-            recipient_addresses.push(rcpt.address_lcase.clone());
-            pending_recipients.push(rcpt);
+        for &rcpt_idx in rcpt_idxs {
+            let rcpt_addr = self.message.recipients[rcpt_idx].address();
+            recipient_addresses.push(rcpt_addr.to_lowercase());
+            pending_recipients.push((rcpt_idx, rcpt_addr));
         }
 
         // Deliver message
         let delivery_result = server
             .deliver_message(IngestMessage {
-                sender_address: self.return_path_lcase.clone(),
-                sender_authenticated: self.flags & DMARC_AUTHENTICATED != 0,
+                sender_address: self.message.return_path.clone(),
+                sender_authenticated: self.message.flags
+                    & (FROM_UNAUTHENTICATED_DMARC | FROM_AUTHENTICATED)
+                    != 0,
                 recipients: recipient_addresses,
-                message_blob: self.blob_hash.clone(),
-                message_size: self.size,
+                message_blob: self.message.blob_hash.clone(),
+                message_size: self.message.size,
                 session_id: self.span_id,
             })
             .await;
 
         // Process delivery results
-        for (rcpt, result) in pending_recipients.into_iter().zip(delivery_result.status) {
-            rcpt.flags |= RCPT_STATUS_CHANGED;
-            match result {
-                LocalDeliveryStatus::Success => {
-                    rcpt.status = Status::Completed(HostResponse {
-                        hostname: "localhost".into(),
-                        response: Response {
-                            code: 250,
-                            esc: [2, 1, 5],
-                            message: "OK".into(),
-                        },
-                    });
-                    total_completed += 1;
-                }
+        for ((rcpt_idx, rcpt_addr), result) in
+            pending_recipients.into_iter().zip(delivery_result.status)
+        {
+            let status = match result {
+                LocalDeliveryStatus::Success => Status::Completed(HostResponse {
+                    hostname: "localhost".into(),
+                    response: Response {
+                        code: 250,
+                        esc: [2, 1, 5],
+                        message: "OK".into(),
+                    },
+                }),
                 LocalDeliveryStatus::TemporaryFailure { reason } => {
-                    rcpt.status = Status::TemporaryFailure(HostResponse {
-                        hostname: ErrorDetails {
-                            entity: "localhost".into(),
-                            details: format!("RCPT TO:<{}>", rcpt.address),
-                        },
-                        response: Response {
-                            code: 451,
-                            esc: [4, 3, 0],
-                            message: reason.into(),
-                        },
-                    });
+                    Status::TemporaryFailure(ErrorDetails {
+                        entity: "localhost".into(),
+                        details: Error::UnexpectedResponse(UnexpectedResponse {
+                            command: format!("RCPT TO:<{rcpt_addr}>"),
+                            response: Response {
+                                code: 451,
+                                esc: [4, 3, 0],
+                                message: reason.into(),
+                            },
+                        }),
+                    })
                 }
                 LocalDeliveryStatus::PermanentFailure { code, reason } => {
-                    total_completed += 1;
-                    rcpt.status = Status::PermanentFailure(HostResponse {
-                        hostname: ErrorDetails {
-                            entity: "localhost".into(),
-                            details: format!("RCPT TO:<{}>", rcpt.address),
-                        },
-                        response: Response {
-                            code: 550,
-                            esc: code,
-                            message: reason.into(),
-                        },
-                    });
+                    Status::PermanentFailure(ErrorDetails {
+                        entity: "localhost".into(),
+                        details: Error::UnexpectedResponse(UnexpectedResponse {
+                            command: format!("RCPT TO:<{rcpt_addr}>"),
+                            response: Response {
+                                code: 550,
+                                esc: code,
+                                message: reason.into(),
+                            },
+                        }),
+                    })
                 }
-            }
+            };
+            statuses.push(DeliveryResult::account(status, rcpt_idx));
         }
 
         // Process autogenerated messages
         for autogenerated in delivery_result.autogenerated {
-            let from_addr_lcase = autogenerated.sender_address.to_lowercase();
-            let from_addr_domain = from_addr_lcase.domain_part().to_string();
-
-            let mut message = server.new_message(
-                autogenerated.sender_address,
-                from_addr_lcase,
-                from_addr_domain,
-                self.span_id,
-            );
+            let mut message = server.new_message(autogenerated.sender_address, self.span_id);
             for rcpt in autogenerated.recipients {
                 message.add_recipient(rcpt, server).await;
             }
@@ -123,7 +108,7 @@ impl Message {
                 .await;
 
             // Queue Message
-            message.size =
+            message.message.size =
                 (autogenerated.message.len() + signature.as_ref().map_or(0, |s| s.len())) as u64;
             if server.has_quota(&mut message).await {
                 message
@@ -139,20 +124,15 @@ impl Message {
                 trc::event!(
                     Sieve(SieveEvent::QuotaExceeded),
                     SpanId = self.span_id,
-                    From = message.return_path_lcase,
+                    From = message.message.return_path,
                     To = message
+                        .message
                         .recipients
                         .into_iter()
-                        .map(|r| trc::Value::from(r.address_lcase))
+                        .map(|r| trc::Value::from(r.address().to_string()))
                         .collect::<Vec<_>>(),
                 );
             }
-        }
-
-        if total_completed == total_rcpt {
-            Status::Completed(())
-        } else {
-            Status::Scheduled
         }
     }
 }

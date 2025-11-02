@@ -39,7 +39,7 @@ pub fn itip_update(
                 | ItipError::OtherSchedulingAgent => {
                     if old_itip.organizer.email.is_local {
                         // RFC 6638 does not support replacing the organizer, so we cancel the event
-                        itip_cancel(old_ical, account_emails).map(|message| vec![message])
+                        itip_cancel(old_ical, account_emails, false).map(|message| vec![message])
                     } else {
                         Err(ItipError::CannotModifyAddress)
                     }

@@ -58,10 +58,10 @@ impl<T: SessionStream> Session<T> {
         self.assert_has_permission(Permission::ImapStatus)?;
 
         let data = self.state.session_data();
-        let version = self.version;
+        let is_utf8 = self.is_utf8;
 
         spawn_op!(data, {
-            match request.parse_get_quota_root(version) {
+            match request.parse_get_quota_root(is_utf8) {
                 Ok(argument) => match data.get_quota_root(argument).await {
                     Ok(response) => {
                         data.write_bytes(response).await?;

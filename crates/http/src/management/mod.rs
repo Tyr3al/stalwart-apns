@@ -7,8 +7,6 @@
 pub mod crypto;
 pub mod dkim;
 pub mod dns;
-#[cfg(feature = "enterprise")]
-pub mod enterprise;
 pub mod log;
 pub mod principal;
 pub mod queue;
@@ -19,15 +17,23 @@ pub mod spam;
 pub mod stores;
 pub mod troubleshoot;
 
-use std::{str::FromStr, sync::Arc};
+// SPDX-SnippetBegin
+// SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+// SPDX-License-Identifier: LicenseRef-SEL
+#[cfg(feature = "enterprise")]
+pub mod enterprise;
 
+#[cfg(feature = "enterprise")]
+use enterprise::telemetry::TelemetryApi;
+// SPDX-SnippetEnd
+
+use crate::auth::oauth::auth::OAuthApiHandler;
 use common::{Server, auth::AccessToken};
 use crypto::CryptoHandler;
 use directory::{Permission, backend::internal::manage};
 use dkim::DkimManagement;
 use dns::DnsManagement;
-#[cfg(feature = "enterprise")]
-use enterprise::telemetry::TelemetryApi;
+use http_proto::{request::fetch_body, *};
 use hyper::{Method, StatusCode, header};
 use jmap::api::{ToJmapHttpResponse, ToRequestError};
 use jmap_proto::error::request::RequestError;
@@ -40,14 +46,11 @@ use report::ManageReports;
 use serde::Serialize;
 use settings::ManageSettings;
 use spam::ManageSpamHandler;
+use std::future::Future;
+use std::{str::FromStr, sync::Arc};
 use store::write::now;
 use stores::ManageStore;
 use troubleshoot::TroubleshootApi;
-
-use crate::auth::oauth::auth::OAuthApiHandler;
-
-use http_proto::{request::fetch_body, *};
-use std::future::Future;
 
 #[derive(Serialize)]
 #[serde(tag = "error")]
@@ -273,17 +276,29 @@ impl ToManageHttpResponse for &trc::Error {
                 }
             }
             .into_http_response(),
-            trc::EventType::Auth(trc::AuthEvent::Failed) => {
-                HttpResponse::new(StatusCode::UNAUTHORIZED)
-                    .with_header(header::WWW_AUTHENTICATE, "Bearer realm=\"Stalwart Server\"")
-                    .with_header(header::WWW_AUTHENTICATE, "Basic realm=\"Stalwart Server\"")
-                    .with_content_type("application/problem+json")
-                    .with_text_body(
-                        serde_json::to_string(&RequestError::unauthorized()).unwrap_or_default(),
-                    )
-            }
+            trc::EventType::Auth(
+                trc::AuthEvent::Failed | trc::AuthEvent::Error | trc::AuthEvent::TokenExpired,
+            ) => HttpResponse::unauthorized(true),
             _ => self.to_request_error().into_http_response(),
         }
+    }
+}
+
+pub trait UnauthorizedResponse {
+    fn unauthorized(include_realms: bool) -> Self;
+}
+
+impl UnauthorizedResponse for HttpResponse {
+    fn unauthorized(include_realms: bool) -> Self {
+        (if include_realms {
+            HttpResponse::new(StatusCode::UNAUTHORIZED)
+                .with_header(header::WWW_AUTHENTICATE, "Bearer realm=\"Stalwart Server\"")
+                .with_header(header::WWW_AUTHENTICATE, "Basic realm=\"Stalwart Server\"")
+        } else {
+            HttpResponse::new(StatusCode::UNAUTHORIZED)
+        })
+        .with_content_type("application/problem+json")
+        .with_text_body(serde_json::to_string(&RequestError::unauthorized()).unwrap_or_default())
     }
 }
 

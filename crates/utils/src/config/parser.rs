@@ -207,9 +207,9 @@ impl<'x, 'y> TomlParser<'x, 'y> {
                         return Err(format!("Empty key at line: {}", self.line));
                     }
                 }
-                'a'..='z' | '.' | 'A'..='Z' | '0'..='9' | '_' | '-' => {
+                /*'a'..='z' | '.' | 'A'..='Z' | '0'..='9' | '_' | '-' => {
                     key.push(ch);
-                }
+                }*/
                 '\"' => {
                     let mut last_ch = char::from(0);
                     while let Some(ch) = self.iter.next() {
@@ -243,10 +243,7 @@ impl<'x, 'y> TomlParser<'x, 'y> {
                     }
                 }
                 _ => {
-                    return Err(format!(
-                        "Unexpected character {:?} found in key at line {}.",
-                        ch, self.line
-                    ));
+                    key.push(ch);
                 }
             }
         }
@@ -582,13 +579,10 @@ mod tests {
         );
 
         assert_eq!(
-            config.sub_keys("sets.strings", "").collect::<Vec<_>>(),
+            config.sub_keys("sets.strings", ""),
             vec!["green", "red", "yellow"]
         );
 
-        assert_eq!(
-            config.sub_keys("sets", ".red").collect::<Vec<_>>(),
-            vec!["string", "strings"]
-        );
+        assert_eq!(config.sub_keys("sets", ".red"), vec!["string", "strings"]);
     }
 }

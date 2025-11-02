@@ -186,11 +186,7 @@ impl Enterprise {
 
         // Parse AI APIs
         let mut ai_apis = AHashMap::new();
-        for id in config
-            .sub_keys("enterprise.ai", ".url")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("enterprise.ai", ".url") {
             if let Some(api) = AiApiConfig::parse(config, &id) {
                 ai_apis.insert(id, api.into());
             }
@@ -308,11 +304,7 @@ impl SpamFilterLlmConfig {
 pub fn parse_metric_alerts(config: &mut Config) -> Vec<MetricAlert> {
     let mut alerts = Vec::new();
 
-    for metric_id in config
-        .sub_keys("metrics.alerts", ".enable")
-        .map(|s| s.to_string())
-        .collect::<Vec<_>>()
-    {
+    for metric_id in config.sub_keys("metrics.alerts", ".enable") {
         if let Some(alert) = parse_metric_alert(config, metric_id) {
             alerts.push(alert);
         }

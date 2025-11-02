@@ -7,24 +7,17 @@
 use common::{Server, auth::AccessToken};
 use email::cache::MessageCacheFetch;
 use email::cache::email::MessageCacheAccess;
-use jmap_proto::types::{acl::Acl, blob::BlobId, collection::Collection};
 use std::future::Future;
-use std::ops::Range;
-use store::BlobClass;
 use trc::AddContext;
-use utils::BlobHash;
+use types::acl::Acl;
+use types::blob::{BlobClass, BlobId};
+use types::collection::Collection;
 
 pub trait BlobDownload: Sync + Send {
     fn blob_download(
         &self,
         blob_id: &BlobId,
         access_token: &AccessToken,
-    ) -> impl Future<Output = trc::Result<Option<Vec<u8>>>> + Send;
-
-    fn get_blob(
-        &self,
-        hash: &BlobHash,
-        range: Range<usize>,
     ) -> impl Future<Output = trc::Result<Option<Vec<u8>>>> + Send;
 
     fn has_access_blob(
@@ -94,18 +87,11 @@ impl BlobDownload for Server {
         if let Some(section) = &blob_id.section {
             self.get_blob_section(&blob_id.hash, section).await
         } else {
-            self.get_blob(&blob_id.hash, 0..usize::MAX).await
+            self.blob_store()
+                .get_blob(blob_id.hash.as_slice(), 0..usize::MAX)
+                .await
         }
-    }
-
-    #[inline(always)]
-    async fn get_blob(&self, hash: &BlobHash, range: Range<usize>) -> trc::Result<Option<Vec<u8>>> {
-        self.core
-            .storage
-            .blob
-            .get_blob(hash.as_ref(), range)
-            .await
-            .caused_by(trc::location!())
+        .caused_by(trc::location!())
     }
 
     async fn has_access_blob(

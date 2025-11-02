@@ -8,16 +8,17 @@ use super::{ArcSeal, AuthResult, DkimSign};
 use crate::{
     core::{Session, SessionAddress, State},
     inbound::milter::Modification,
-    queue::{
-        self, DMARC_AUTHENTICATED, Message, MessageSource, QueueEnvelope, Schedule,
-        quota::HasQueueQuota,
-    },
+    queue::{self, Message, MessageSource, MessageWrapper, QueueEnvelope, quota::HasQueueQuota},
     reporting::analysis::AnalyzeReport,
     scripts::ScriptResult,
 };
 use common::{
     config::{
-        smtp::{auth::VerifyStrategy, session::Stage},
+        smtp::{
+            auth::VerifyStrategy,
+            queue::{QueueExpiry, QueueName},
+            session::Stage,
+        },
         spamfilter::SpamFilterAction,
     },
     listener::SessionStream,
@@ -37,11 +38,10 @@ use smtp_proto::{
 };
 use std::{
     borrow::Cow,
-    time::{Duration, Instant, SystemTime},
+    time::{Instant, SystemTime},
 };
-use store::write::now;
 use trc::SmtpEvent;
-use utils::config::Rate;
+use utils::{DomainPart, config::Rate};
 
 impl<T: SessionStream> Session<T> {
     pub async fn queue_message(&mut self) -> Cow<'static, [u8]> {
@@ -385,38 +385,38 @@ impl<T: SessionStream> Session<T> {
         }
 
         // Add Received-SPF header
-        if let Some(spf_output) = &self.data.spf_mail_from {
-            if self
+        if let Some(spf_output) = &self.data.spf_mail_from
+            && self
                 .server
                 .eval_if(&dc.add_received_spf, self, self.data.session_id)
                 .await
                 .unwrap_or(true)
-            {
-                ReceivedSpf::new(
-                    spf_output,
-                    self.data.remote_ip,
-                    &self.data.helo_domain,
-                    &mail_from.address_lcase,
-                    &self.hostname,
-                )
-                .write_header(&mut headers);
-            }
+        {
+            ReceivedSpf::new(
+                spf_output,
+                self.data.remote_ip,
+                &self.data.helo_domain,
+                &mail_from.address_lcase,
+                &self.hostname,
+            )
+            .write_header(&mut headers);
         }
 
         // ARC Seal
-        if let (Some(arc_sealer), Some(arc_output)) = (arc_sealer, &arc_output) {
-            if !dkim_output.is_empty() && arc_output.can_be_sealed() {
-                match arc_sealer.seal(&auth_message, &auth_results, arc_output) {
-                    Ok(set) => {
-                        set.write_header(&mut headers);
-                    }
-                    Err(err) => {
-                        trc::error!(
-                            trc::Error::from(err)
-                                .span_id(self.data.session_id)
-                                .details("Failed to ARC seal message")
-                        );
-                    }
+        if let (Some(arc_sealer), Some(arc_output)) = (arc_sealer, &arc_output)
+            && !dkim_output.is_empty()
+            && arc_output.can_be_sealed()
+        {
+            match arc_sealer.seal(&auth_message, &auth_results, arc_output) {
+                Ok(set) => {
+                    set.write_header(&mut headers);
+                }
+                Err(err) => {
+                    trc::error!(
+                        trc::Error::from(err)
+                            .span_id(self.data.session_id)
+                            .details("Failed to ARC seal message")
+                    );
                 }
             }
         }
@@ -603,7 +603,7 @@ impl<T: SessionStream> Session<T> {
             .unwrap_or(true)
         {
             headers.extend_from_slice(b"Return-Path: <");
-            headers.extend_from_slice(message.return_path.as_bytes());
+            headers.extend_from_slice(message.message.return_path.as_bytes());
             headers.extend_from_slice(b">\r\n");
         }
 
@@ -656,7 +656,7 @@ impl<T: SessionStream> Session<T> {
         }
 
         // Update size
-        message.size = (raw_message.len() + headers.len()) as u64;
+        message.message.size = (raw_message.len() + headers.len()) as u64;
 
         // Verify queue quota
         if self.server.has_quota(&mut message).await {
@@ -665,15 +665,23 @@ impl<T: SessionStream> Session<T> {
 
             // Queue message
             let source = if !self.is_authenticated() {
-                MessageSource::Unauthenticated
+                let is_dmarc_authenticated =
+                    dmarc_result.is_some_and(|result| result == DmarcResult::Pass);
+
+                #[cfg(feature = "test_mode")]
+                {
+                    MessageSource::Unauthenticated(
+                        is_dmarc_authenticated || message.message.return_path.starts_with("dmarc-"),
+                    )
+                }
+
+                #[cfg(not(feature = "test_mode"))]
+                {
+                    MessageSource::Unauthenticated(is_dmarc_authenticated)
+                }
             } else {
                 MessageSource::Authenticated
             };
-            if self.is_authenticated()
-                || dmarc_result.is_some_and(|result| result == DmarcResult::Pass)
-            {
-                message.flags |= DMARC_AUTHENTICATED;
-            }
             if message
                 .queue(
                     Some(&headers),
@@ -703,135 +711,133 @@ impl<T: SessionStream> Session<T> {
         mut rcpt_to: Vec<SessionAddress>,
         queue_id: u64,
         span_id: u64,
-    ) -> Message {
+    ) -> MessageWrapper {
         // Build message
         let created = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         let mut message = Message {
-            queue_id,
-            span_id,
             created,
-            return_path: mail_from.address,
-            return_path_lcase: mail_from.address_lcase,
-            return_path_domain: mail_from.domain,
+            return_path: mail_from.address.to_lowercase_domain(),
             recipients: Vec::with_capacity(rcpt_to.len()),
-            domains: Vec::with_capacity(3),
             flags: mail_from.flags,
             priority: self.data.priority,
             size: 0,
             env_id: mail_from.dsn_info,
             blob_hash: Default::default(),
             quota_keys: Vec::new(),
+            received_from_ip: self.data.remote_ip,
+            received_via_port: self.data.local_port,
         };
 
         // Add recipients
-        let future_release = Duration::from_secs(self.data.future_release);
+        let future_release = self.data.future_release;
         rcpt_to.sort_unstable();
         for rcpt in rcpt_to {
-            if message
-                .domains
-                .last()
-                .is_none_or(|d| d.domain != rcpt.domain)
-            {
-                let rcpt_idx = message.domains.len();
-                message.domains.push(queue::Domain {
-                    retry: Schedule::now(),
-                    notify: Schedule::now(),
-                    expires: 0,
-                    status: queue::Status::Scheduled,
-                    domain: rcpt.domain,
-                });
+            message.recipients.push(
+                queue::Recipient::new(rcpt.address)
+                    .with_flags(
+                        if rcpt.flags
+                            & (RCPT_NOTIFY_DELAY
+                                | RCPT_NOTIFY_FAILURE
+                                | RCPT_NOTIFY_SUCCESS
+                                | RCPT_NOTIFY_NEVER)
+                            != 0
+                        {
+                            rcpt.flags
+                        } else {
+                            rcpt.flags | RCPT_NOTIFY_DELAY | RCPT_NOTIFY_FAILURE
+                        },
+                    )
+                    .with_orcpt(rcpt.dsn_info),
+            );
 
-                let envelope = QueueEnvelope::new(&message, rcpt_idx);
+            let envelope = QueueEnvelope::new(&message, message.recipients.last().unwrap());
 
-                // Set next retry time
-                let retry = if self.data.future_release == 0 {
-                    queue::Schedule::now()
-                } else {
-                    queue::Schedule::later(future_release)
-                };
+            // Set next retry time
+            let retry = if self.data.future_release == 0 {
+                queue::Schedule::now()
+            } else {
+                queue::Schedule::later(future_release)
+            };
 
-                // Set expiration and notification times
-                let config = &self.server.core.smtp.queue;
-                let (num_intervals, next_notify) = self
+            // Resolve queue
+            let queue = self.server.get_queue_or_default(
+                &self
                     .server
-                    .eval_if::<Vec<Duration>, _>(&config.notify, &envelope, self.data.session_id)
+                    .eval_if::<String, _>(
+                        &self.server.core.smtp.queue.queue,
+                        &envelope,
+                        self.data.session_id,
+                    )
                     .await
-                    .and_then(|v| (v.len(), v.into_iter().next()?).into())
-                    .unwrap_or_else(|| (1, Duration::from_secs(86400)));
-                let (notify, expires) = if self.data.delivery_by == 0 {
-                    (
-                        queue::Schedule::later(future_release + next_notify),
-                        now()
-                            + future_release.as_secs()
-                            + self
-                                .server
-                                .eval_if(&config.expire, &envelope, self.data.session_id)
-                                .await
-                                .unwrap_or_else(|| Duration::from_secs(5 * 86400))
-                                .as_secs(),
-                    )
-                } else if (message.flags & MAIL_BY_RETURN) != 0 {
-                    (
-                        queue::Schedule::later(future_release + next_notify),
-                        now() + self.data.delivery_by as u64,
-                    )
-                } else {
-                    let expire = self
-                        .server
-                        .eval_if(&config.expire, &envelope, self.data.session_id)
-                        .await
-                        .unwrap_or_else(|| Duration::from_secs(5 * 86400));
-                    let expire_secs = expire.as_secs();
-                    let notify = if self.data.delivery_by.is_positive() {
-                        let notify_at = self.data.delivery_by as u64;
-                        if expire_secs > notify_at {
-                            Duration::from_secs(notify_at)
-                        } else {
-                            next_notify
-                        }
-                    } else {
-                        let notify_at = -self.data.delivery_by as u64;
-                        if expire_secs > notify_at {
-                            Duration::from_secs(expire_secs - notify_at)
-                        } else {
-                            next_notify
-                        }
-                    };
-                    let mut notify = queue::Schedule::later(future_release + notify);
-                    notify.inner = (num_intervals - 1) as u32; // Disable further notification attempts
+                    .unwrap_or_else(|| "default".to_string()),
+                self.data.session_id,
+            );
 
-                    (notify, now() + expire_secs)
+            // Set expiration and notification times
+            let num_intervals = std::cmp::max(queue.notify.len(), 1);
+            let next_notify = queue.notify.first().copied().unwrap_or(86400);
+            let (notify, expires) = if self.data.delivery_by == 0 {
+                (
+                    queue::Schedule::later(future_release + next_notify),
+                    match queue.expiry {
+                        QueueExpiry::Ttl(time) => QueueExpiry::Ttl(future_release + time),
+                        QueueExpiry::Attempts(count) => QueueExpiry::Attempts(count),
+                    },
+                )
+            } else if (message.flags & MAIL_BY_RETURN) != 0 {
+                (
+                    queue::Schedule::later(future_release + next_notify),
+                    QueueExpiry::Ttl(self.data.delivery_by as u64),
+                )
+            } else {
+                let (notify, expires) = match queue.expiry {
+                    QueueExpiry::Ttl(expire_secs) => (
+                        (if self.data.delivery_by.is_positive() {
+                            let notify_at = self.data.delivery_by as u64;
+                            if expire_secs > notify_at {
+                                notify_at
+                            } else {
+                                next_notify
+                            }
+                        } else {
+                            let notify_at = -self.data.delivery_by as u64;
+                            if expire_secs > notify_at {
+                                expire_secs - notify_at
+                            } else {
+                                next_notify
+                            }
+                        }),
+                        QueueExpiry::Ttl(expire_secs),
+                    ),
+                    QueueExpiry::Attempts(_) => (
+                        next_notify,
+                        QueueExpiry::Ttl(self.data.delivery_by.unsigned_abs()),
+                    ),
                 };
 
-                // Update domain
-                let domain = message.domains.last_mut().unwrap();
-                domain.retry = retry;
-                domain.notify = notify;
-                domain.expires = expires;
-            }
+                let mut notify = queue::Schedule::later(future_release + notify);
+                notify.inner = (num_intervals - 1) as u32; // Disable further notification attempts
 
-            message.recipients.push(queue::Recipient {
-                address: rcpt.address,
-                address_lcase: rcpt.address_lcase,
-                status: queue::Status::Scheduled,
-                flags: if rcpt.flags
-                    & (RCPT_NOTIFY_DELAY
-                        | RCPT_NOTIFY_FAILURE
-                        | RCPT_NOTIFY_SUCCESS
-                        | RCPT_NOTIFY_NEVER)
-                    != 0
-                {
-                    rcpt.flags
-                } else {
-                    rcpt.flags | RCPT_NOTIFY_DELAY | RCPT_NOTIFY_FAILURE
-                },
-                domain_idx: (message.domains.len() - 1) as u32,
-                orcpt: rcpt.dsn_info,
-            });
+                (notify, expires)
+            };
+
+            // Update recipient
+            let recipient = message.recipients.last_mut().unwrap();
+            recipient.retry = retry;
+            recipient.notify = notify;
+            recipient.expires = expires;
+            recipient.queue = queue.virtual_queue;
         }
-        message
+
+        MessageWrapper {
+            queue_id,
+            queue_name: QueueName::default(),
+            is_multi_queue: false,
+            span_id,
+            message,
+        }
     }
 
     pub async fn can_send_data(&mut self) -> Result<bool, ()> {

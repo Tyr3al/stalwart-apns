@@ -6,9 +6,6 @@
 
 #![warn(clippy::large_futures)]
 
-use core::cache::CachedDirectory;
-use std::{fmt::Debug, sync::Arc};
-
 use ahash::AHashMap;
 use backend::{
     imap::{ImapDirectory, ImapError},
@@ -17,13 +14,15 @@ use backend::{
     smtp::SmtpDirectory,
     sql::SqlDirectory,
 };
-
+use core::cache::CachedDirectory;
 use deadpool::managed::PoolError;
 use ldap3::LdapError;
 use mail_send::Credentials;
 use proc_macros::EnumMethods;
+use std::{fmt::Debug, sync::Arc};
 use store::Store;
 use trc::ipc::bitset::Bitset;
+use types::collection::Collection;
 
 pub mod backend;
 pub mod core;
@@ -33,48 +32,56 @@ pub struct Directory {
     pub cache: Option<CachedDirectory>,
 }
 
+pub const FALLBACK_ADMIN_ID: u32 = u32::MAX;
+
 #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
     pub id: u32,
     pub typ: Type,
     pub name: String,
-    pub description: Option<String>,
-    pub secrets: Vec<String>,
-    pub emails: Vec<String>,
-    pub quota: Option<u64>,
-    pub tenant: Option<u32>,
     pub data: Vec<PrincipalData>,
 }
 
-#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize, Debug, Clone, PartialEq, Eq)]
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PrincipalData {
-    MemberOf(Vec<u32>),
-    Roles(Vec<u32>),
-    Lists(Vec<u32>),
-    Permissions(Vec<PermissionGrant>),
+    Password(String),
+
+    // Permissions and memberships
+    Tenant(u32),
+    MemberOf(u32),
+    Role(u32),
+    List(u32),
+    Permission { permission_id: u32, grant: bool },
+
+    // Quotas
+    DiskQuota(u64),
+    DirectoryQuota { quota: u32, typ: Type },
+    ObjectQuota { quota: u32, typ: Collection },
+
+    // Profile data
+    Description(String),
+    PrimaryEmail(String),
+    EmailAlias(String),
     Picture(String),
-    ExternalMembers(Vec<String>),
-    Urls(Vec<String>),
-    PrincipalQuota(Vec<PrincipalQuota>),
+    ExternalMember(String),
+    Url(String),
     Locale(String),
+
+    // Secrets
+    AppPassword(String),
+    OtpAuth(String),
 }
 
-#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize, Debug, Clone, PartialEq, Eq)]
-pub struct PrincipalQuota {
-    pub quota: u64,
-    pub typ: Type,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionGrant {
+    pub permission: Permission,
+    pub grant: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberOf {
     pub principal_id: u32,
     pub typ: Type,
-}
-
-#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize, Debug, Clone, PartialEq, Eq)]
-pub struct PermissionGrant {
-    pub permission: Permission,
-    pub grant: bool,
 }
 
 #[derive(
@@ -89,6 +96,7 @@ pub struct PermissionGrant {
     Eq,
     serde::Serialize,
     serde::Deserialize,
+    Hash,
 )]
 #[serde(rename_all = "camelCase")]
 pub enum Type {
@@ -107,18 +115,7 @@ pub enum Type {
 }
 
 #[derive(
-    rkyv::Archive,
-    rkyv::Deserialize,
-    rkyv::Serialize,
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-    EnumMethods,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, EnumMethods,
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum Permission {
@@ -377,10 +374,60 @@ pub enum Permission {
     CalendarAlarms,
     CalendarSchedulingSend,
     CalendarSchedulingReceive,
+
+    JmapAddressBookGet,
+    JmapAddressBookSet,
+    JmapAddressBookChanges,
+
+    JmapContactCardGet,
+    JmapContactCardChanges,
+    JmapContactCardQuery,
+    JmapContactCardQueryChanges,
+    JmapContactCardSet,
+    JmapContactCardCopy,
+    JmapContactCardParse,
+
+    JmapFileNodeGet,
+    JmapFileNodeSet,
+    JmapFileNodeChanges,
+    JmapFileNodeQuery,
+    JmapFileNodeQueryChanges,
+
+    JmapPrincipalGetAvailability,
+    JmapPrincipalChanges,
+
+    JmapShareNotificationGet,
+    JmapShareNotificationSet,
+    JmapShareNotificationChanges,
+    JmapShareNotificationQuery,
+    JmapShareNotificationQueryChanges,
+
+    JmapCalendarGet,
+    JmapCalendarSet,
+    JmapCalendarChanges,
+
+    JmapCalendarEventGet,
+    JmapCalendarEventSet,
+    JmapCalendarEventChanges,
+    JmapCalendarEventQuery,
+    JmapCalendarEventQueryChanges,
+    JmapCalendarEventCopy,
+    JmapCalendarEventParse,
+
+    JmapCalendarEventNotificationGet,
+    JmapCalendarEventNotificationSet,
+    JmapCalendarEventNotificationChanges,
+    JmapCalendarEventNotificationQuery,
+    JmapCalendarEventNotificationQueryChanges,
+
+    JmapParticipantIdentityGet,
+    JmapParticipantIdentitySet,
+    JmapParticipantIdentityChanges,
+    // TODO: Reuse DeleteSystemFolders position for new permission
     // WARNING: add new ids at the end (TODO: use static ids)
 }
 
-pub const PERMISSIONS_BITSET_SIZE: usize = Permission::COUNT.div_ceil(std::mem::size_of::<usize>());
+pub const PERMISSIONS_BITSET_SIZE: usize = Permission::COUNT.div_ceil(std::mem::size_of::<u32>());
 pub type Permissions = Bitset<PERMISSIONS_BITSET_SIZE>;
 
 pub const ROLE_ADMIN: u32 = u32::MAX;
@@ -401,6 +448,12 @@ pub enum QueryBy<'x> {
     Name(&'x str),
     Id(u32),
     Credentials(&'x Credentials<String>),
+}
+
+pub struct QueryParams<'x> {
+    pub by: QueryBy<'x>,
+    pub return_member_of: bool,
+    pub only_app_pass: bool,
 }
 
 impl Default for Directory {
@@ -502,5 +555,49 @@ impl From<&ArchivedType> for Type {
             ArchivedType::ApiKey => Type::ApiKey,
             ArchivedType::OauthClient => Type::OauthClient,
         }
+    }
+}
+
+impl<'x> QueryParams<'x> {
+    pub fn name(name: &'x str) -> Self {
+        QueryParams {
+            by: QueryBy::Name(name),
+            return_member_of: false,
+            only_app_pass: false,
+        }
+    }
+
+    pub fn credentials(credentials: &'x Credentials<String>) -> Self {
+        QueryParams {
+            by: QueryBy::Credentials(credentials),
+            return_member_of: false,
+            only_app_pass: false,
+        }
+    }
+
+    pub fn id(id: u32) -> Self {
+        QueryParams {
+            by: QueryBy::Id(id),
+            return_member_of: false,
+            only_app_pass: false,
+        }
+    }
+
+    pub fn by(by: QueryBy<'x>) -> Self {
+        QueryParams {
+            by,
+            return_member_of: false,
+            only_app_pass: false,
+        }
+    }
+
+    pub fn with_return_member_of(mut self, return_member_of: bool) -> Self {
+        self.return_member_of = return_member_of;
+        self
+    }
+
+    pub fn with_only_app_pass(mut self, only_app_pass: bool) -> Self {
+        self.only_app_pass = only_app_pass;
+        self
     }
 }

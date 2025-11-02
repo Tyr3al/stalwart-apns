@@ -36,19 +36,24 @@ impl<T: SessionStream> Session<T> {
             // Validate access
             self.assert_has_permission(Permission::ImapList)?;
 
-            request.parse_list(self.version)
+            request.parse_list(self.is_utf8)
         } else {
             // Validate access
             self.assert_has_permission(Permission::ImapLsub)?;
 
-            request.parse_lsub()
+            request.parse_lsub(self.is_utf8)
         }?;
 
         if !arguments.is_separator_query() {
             let data = self.state.session_data();
             let version = self.version;
+            let is_utf8 = self.is_utf8;
 
-            spawn_op!(data, data.list(arguments, is_lsub, version, op_start).await)
+            spawn_op!(
+                data,
+                data.list(arguments, is_lsub, version, is_utf8, op_start)
+                    .await
+            )
         } else {
             self.write_bytes(
                 StatusResponse::completed(command)
@@ -56,6 +61,7 @@ impl<T: SessionStream> Session<T> {
                     .serialize(
                         list::Response {
                             is_rev2: self.version.is_rev2(),
+                            is_utf8: self.is_utf8,
                             is_lsub,
                             list_items: vec![ListItem {
                                 mailbox_name: "".into(),
@@ -78,6 +84,7 @@ impl<T: SessionStream> SessionData<T> {
         arguments: Arguments,
         is_lsub: bool,
         version: ProtocolVersion,
+        is_utf8: bool,
         op_start: Instant,
     ) -> trc::Result<()> {
         let (tag, reference_name, mut patterns, selection_options, return_options) = match arguments
@@ -309,6 +316,7 @@ impl<T: SessionStream> SessionData<T> {
             .serialize(
                 list::Response {
                     is_rev2: version.is_rev2(),
+                    is_utf8,
                     is_lsub,
                     list_items,
                     status_items,

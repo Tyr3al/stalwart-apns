@@ -279,23 +279,23 @@ impl SocketOpts {
                 Details = "Failed to set TCP_NODELAY",
             );
         }
-        if let Some(ttl) = self.ttl {
-            if let Err(err) = stream.set_ttl(ttl) {
-                trc::event!(
-                    Network(trc::NetworkEvent::SetOptError),
-                    Reason = err.to_string(),
-                    Details = "Failed to set TTL",
-                );
-            }
+        if let Some(ttl) = self.ttl
+            && let Err(err) = stream.set_ttl(ttl)
+        {
+            trc::event!(
+                Network(trc::NetworkEvent::SetOptError),
+                Reason = err.to_string(),
+                Details = "Failed to set TTL",
+            );
         }
-        if self.linger.is_some() {
-            if let Err(err) = stream.set_linger(self.linger) {
-                trc::event!(
-                    Network(trc::NetworkEvent::SetOptError),
-                    Reason = err.to_string(),
-                    Details = "Failed to set LINGER",
-                );
-            }
+        if self.linger.is_some()
+            && let Err(err) = stream.set_linger(self.linger)
+        {
+            trc::event!(
+                Network(trc::NetworkEvent::SetOptError),
+                Reason = err.to_string(),
+                Details = "Failed to set LINGER",
+            );
         }
     }
 }

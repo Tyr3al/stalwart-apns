@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use crate::{auth::AccessToken, sharing::notification::ShareNotification};
 use ahash::AHashSet;
-use jmap_proto::types::{property::Property, value::AclGrant};
 use rkyv::{
     option::ArchivedOption,
     primitive::{ArchivedU32, ArchivedU64},
@@ -14,25 +14,25 @@ use rkyv::{
 use std::{borrow::Cow, fmt::Debug};
 use store::{
     Serialize, SerializeInfallible,
-    write::{Archive, Archiver, BatchBuilder, BlobOp, DirectoryClass, IntoOperations, TagValue},
+    write::{Archive, Archiver, BatchBuilder, BlobOp, DirectoryClass, IntoOperations},
 };
-use utils::BlobHash;
-
-use crate::auth::AsTenantId;
+use types::{
+    acl::AclGrant,
+    blob_hash::BlobHash,
+    collection::{Collection, SyncCollection},
+    field::Field,
+};
+use utils::{map::bitmap::Bitmap, snowflake::SnowflakeIdGenerator};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexValue<'x> {
     Index {
-        field: u8,
+        field: Field,
         value: IndexItem<'x>,
     },
     IndexList {
-        field: u8,
+        field: Field,
         value: Vec<IndexItem<'x>>,
-    },
-    Tag {
-        field: u8,
-        value: Vec<TagValue>,
     },
     Blob {
         value: BlobHash,
@@ -41,14 +41,14 @@ pub enum IndexValue<'x> {
         used: u32,
     },
     LogContainer {
-        sync_collection: u8,
+        sync_collection: SyncCollection,
     },
     LogContainerProperty {
-        sync_collection: u8,
+        sync_collection: SyncCollection,
         ids: Vec<u32>,
     },
     LogItem {
-        sync_collection: u8,
+        sync_collection: SyncCollection,
         prefix: Option<u32>,
     },
     Acl {
@@ -232,6 +232,7 @@ pub trait IndexableAndSerializableObject:
 
 #[derive(Debug)]
 pub struct ObjectIndexBuilder<C: IndexableObject, N: IndexableAndSerializableObject> {
+    changed_by: u32,
     tenant_id: Option<u32>,
     current: Option<Archive<C>>,
     changes: Option<N>,
@@ -249,6 +250,7 @@ impl<C: IndexableObject, N: IndexableAndSerializableObject> ObjectIndexBuilder<C
             current: None,
             changes: None,
             tenant_id: None,
+            changed_by: u32::MAX,
         }
     }
 
@@ -279,8 +281,9 @@ impl<C: IndexableObject, N: IndexableAndSerializableObject> ObjectIndexBuilder<C
         self.current.as_ref()
     }
 
-    pub fn with_tenant_id(mut self, tenant: &impl AsTenantId) -> Self {
-        self.tenant_id = tenant.tenant_id();
+    pub fn with_access_token(mut self, access_token: &AccessToken) -> Self {
+        self.tenant_id = access_token.tenant.as_ref().map(|t| t.id);
+        self.changed_by = access_token.primary_id();
         self
     }
 }
@@ -293,21 +296,21 @@ impl<C: IndexableObject, N: IndexableAndSerializableObject> IntoOperations
             (None, Some(changes)) => {
                 // Insertion
                 for item in changes.index_values() {
-                    build_index(batch, item, self.tenant_id, true);
+                    build_index(batch, item, self.changed_by, self.tenant_id, true);
                 }
                 if N::is_versioned() {
                     let (offset, bytes) = Archiver::new(changes).serialize_versioned()?;
-                    batch.set_versioned(Property::Value, bytes, offset);
+                    batch.set_versioned(Field::ARCHIVE, bytes, offset);
                 } else {
-                    batch.set(Property::Value, Archiver::new(changes).serialize()?);
+                    batch.set(Field::ARCHIVE, Archiver::new(changes).serialize()?);
                 }
             }
             (Some(current), Some(changes)) => {
                 // Update
-                batch.assert_value(Property::Value, &current);
+                batch.assert_value(Field::ARCHIVE, &current);
                 for (current, change) in current.inner.index_values().zip(changes.index_values()) {
                     if current != change {
-                        merge_index(batch, current, change, self.tenant_id)?;
+                        merge_index(batch, current, change, self.changed_by, self.tenant_id)?;
                     } else {
                         match current {
                             IndexValue::LogContainer { sync_collection } => {
@@ -325,19 +328,19 @@ impl<C: IndexableObject, N: IndexableAndSerializableObject> IntoOperations
                 }
                 if N::is_versioned() {
                     let (offset, bytes) = Archiver::new(changes).serialize_versioned()?;
-                    batch.set_versioned(Property::Value, bytes, offset);
+                    batch.set_versioned(Field::ARCHIVE, bytes, offset);
                 } else {
-                    batch.set(Property::Value, Archiver::new(changes).serialize()?);
+                    batch.set(Field::ARCHIVE, Archiver::new(changes).serialize()?);
                 }
             }
             (Some(current), None) => {
                 // Deletion
-                batch.assert_value(Property::Value, &current);
+                batch.assert_value(Field::ARCHIVE, &current);
                 for item in current.inner.index_values() {
-                    build_index(batch, item, self.tenant_id, false);
+                    build_index(batch, item, self.changed_by, self.tenant_id, false);
                 }
 
-                batch.clear(Property::Value);
+                batch.clear(Field::ARCHIVE);
             }
             (None, None) => unreachable!(),
         }
@@ -346,7 +349,13 @@ impl<C: IndexableObject, N: IndexableAndSerializableObject> IntoOperations
     }
 }
 
-fn build_index(batch: &mut BatchBuilder, item: IndexValue<'_>, tenant_id: Option<u32>, set: bool) {
+fn build_index(
+    batch: &mut BatchBuilder,
+    item: IndexValue<'_>,
+    changed_by: u32,
+    tenant_id: Option<u32>,
+    set: bool,
+) {
     match item {
         IndexValue::Index { field, value } => {
             if !value.is_empty() {
@@ -366,15 +375,6 @@ fn build_index(batch: &mut BatchBuilder, item: IndexValue<'_>, tenant_id: Option
                 }
             }
         }
-        IndexValue::Tag { field, value } => {
-            for item in value {
-                if set {
-                    batch.tag(field, item);
-                } else {
-                    batch.untag(field, item);
-                }
-            }
-        }
         IndexValue::Blob { value } => {
             if set {
                 batch.set(BlobOp::Link { hash: value }, vec![]);
@@ -383,11 +383,46 @@ fn build_index(batch: &mut BatchBuilder, item: IndexValue<'_>, tenant_id: Option
             }
         }
         IndexValue::Acl { value } => {
+            let object_account_id = batch.last_account_id().unwrap_or_default();
+            let object_type = batch.last_collection().unwrap_or(Collection::None);
+            let object_id = batch.last_document_id().unwrap_or_default();
+            let notification_id = SnowflakeIdGenerator::from_sequence_and_node_id(
+                object_type as u64 ^ object_account_id as u64,
+                None,
+            )
+            .unwrap_or_default();
+
             for item in value.as_ref() {
                 if set {
                     batch.acl_grant(item.account_id, item.grants.bitmap.serialize());
+                    batch.log_share_notification(
+                        notification_id,
+                        item.account_id,
+                        ShareNotification {
+                            object_account_id,
+                            object_id,
+                            object_type,
+                            changed_by,
+                            old_rights: Default::default(),
+                            new_rights: item.grants,
+                            name: Default::default(),
+                        },
+                    );
                 } else {
                     batch.acl_revoke(item.account_id);
+                    batch.log_share_notification(
+                        notification_id,
+                        item.account_id,
+                        ShareNotification {
+                            object_account_id,
+                            object_id,
+                            object_type,
+                            changed_by,
+                            old_rights: item.grants,
+                            new_rights: Default::default(),
+                            name: Default::default(),
+                        },
+                    );
                 }
             }
         }
@@ -434,6 +469,7 @@ fn merge_index(
     batch: &mut BatchBuilder,
     current: IndexValue<'_>,
     change: IndexValue<'_>,
+    changed_by: u32,
     tenant_id: Option<u32>,
 ) -> trc::Result<()> {
     match (current, change) {
@@ -475,33 +511,28 @@ fn merge_index(
                 batch.unindex(field, value.into_owned());
             }
         }
-        (
-            IndexValue::Tag {
-                field,
-                value: old_value,
-            },
-            IndexValue::Tag {
-                value: new_value, ..
-            },
-        ) => {
-            for old_tag in &old_value {
-                if !new_value.contains(old_tag) {
-                    batch.untag(field, old_tag.clone());
-                }
-            }
-
-            for new_tag in new_value {
-                if !old_value.contains(&new_tag) {
-                    batch.tag(field, new_tag);
-                }
-            }
-        }
         (IndexValue::Blob { value: old_hash }, IndexValue::Blob { value: new_hash }) => {
             batch.clear(BlobOp::Link { hash: old_hash });
             batch.set(BlobOp::Link { hash: new_hash }, vec![]);
         }
         (IndexValue::Acl { value: old_acl }, IndexValue::Acl { value: new_acl }) => {
-            match (!old_acl.is_empty(), !new_acl.is_empty()) {
+            let has_old_acl = !old_acl.is_empty();
+            let has_new_acl = !new_acl.is_empty();
+
+            if !has_old_acl && !has_new_acl {
+                return Ok(());
+            }
+
+            let object_account_id = batch.last_account_id().unwrap_or_default();
+            let object_type = batch.last_collection().unwrap_or(Collection::None);
+            let object_id = batch.last_document_id().unwrap_or_default();
+            let notification_id = SnowflakeIdGenerator::from_sequence_and_node_id(
+                object_type as u64 ^ object_account_id as u64,
+                None,
+            )
+            .unwrap_or_default();
+
+            match (has_old_acl, has_new_acl) {
                 (true, true) => {
                     // Remove deleted ACLs
                     for current_item in old_acl.as_ref() {
@@ -510,22 +541,51 @@ fn merge_index(
                             .any(|item| item.account_id == current_item.account_id)
                         {
                             batch.acl_revoke(current_item.account_id);
+                            batch.log_share_notification(
+                                notification_id,
+                                current_item.account_id,
+                                ShareNotification {
+                                    object_account_id,
+                                    object_id,
+                                    object_type,
+                                    changed_by,
+                                    old_rights: current_item.grants,
+                                    new_rights: Default::default(),
+                                    name: Default::default(),
+                                },
+                            );
                         }
                     }
 
                     // Update ACLs
                     for item in new_acl.as_ref() {
                         let mut add_item = true;
+                        let mut old_rights = Bitmap::default();
                         for current_item in old_acl.as_ref() {
                             if item.account_id == current_item.account_id {
                                 if item.grants == current_item.grants {
                                     add_item = false;
+                                } else {
+                                    old_rights = current_item.grants;
                                 }
                                 break;
                             }
                         }
                         if add_item {
                             batch.acl_grant(item.account_id, item.grants.bitmap.serialize());
+                            batch.log_share_notification(
+                                notification_id,
+                                item.account_id,
+                                ShareNotification {
+                                    object_account_id,
+                                    object_id,
+                                    object_type,
+                                    changed_by,
+                                    old_rights,
+                                    new_rights: item.grants,
+                                    name: Default::default(),
+                                },
+                            );
                         }
                     }
                 }
@@ -533,12 +593,38 @@ fn merge_index(
                     // Add all ACLs
                     for item in new_acl.as_ref() {
                         batch.acl_grant(item.account_id, item.grants.bitmap.serialize());
+                        batch.log_share_notification(
+                            notification_id,
+                            item.account_id,
+                            ShareNotification {
+                                object_account_id,
+                                object_id,
+                                object_type,
+                                changed_by,
+                                old_rights: Default::default(),
+                                new_rights: item.grants,
+                                name: Default::default(),
+                            },
+                        );
                     }
                 }
                 (true, false) => {
                     // Remove all ACLs
                     for item in old_acl.as_ref() {
                         batch.acl_revoke(item.account_id);
+                        batch.log_share_notification(
+                            notification_id,
+                            item.account_id,
+                            ShareNotification {
+                                object_account_id,
+                                object_id,
+                                object_type,
+                                changed_by,
+                                old_rights: item.grants,
+                                new_rights: Default::default(),
+                                name: Default::default(),
+                            },
+                        );
                     }
                 }
                 _ => {}

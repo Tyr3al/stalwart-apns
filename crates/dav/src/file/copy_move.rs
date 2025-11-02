@@ -21,16 +21,16 @@ use dav_proto::{Depth, RequestHeaders};
 use groupware::{DestroyArchive, cache::GroupwareCache, file::FileNode};
 use http_proto::HttpResponse;
 use hyper::StatusCode;
-use jmap_proto::types::{
-    acl::Acl,
-    collection::{Collection, SyncCollection, VanishedCollection},
-};
 use std::sync::Arc;
 use store::{
     ahash::AHashMap,
     write::{BatchBuilder, now},
 };
 use trc::AddContext;
+use types::{
+    acl::Acl,
+    collection::{Collection, SyncCollection, VanishedCollection},
+};
 
 pub(crate) trait FileCopyMoveRequestHandler: Sync + Send {
     fn handle_file_copy_move_request(
@@ -146,16 +146,15 @@ impl FileCopyMoveRequestHandler for Server {
 
         // Validate destination ACLs
         if let Some(document_id) = destination.document_id {
-            if let Some(delete_destination) = &delete_destination {
-                if !access_token.is_member(to_account_id)
-                    && !from_resources.has_access_to_container(
-                        access_token,
-                        delete_destination.document_id.unwrap(),
-                        Acl::Delete,
-                    )
-                {
-                    return Err(DavError::Code(StatusCode::FORBIDDEN));
-                }
+            if let Some(delete_destination) = &delete_destination
+                && !access_token.is_member(to_account_id)
+                && !from_resources.has_access_to_container(
+                    access_token,
+                    delete_destination.document_id.unwrap(),
+                    Acl::Delete,
+                )
+            {
+                return Err(DavError::Code(StatusCode::FORBIDDEN));
             }
 
             if !access_token.is_member(to_account_id)
@@ -496,7 +495,7 @@ async fn copy_container(
             .custom(
                 ObjectIndexBuilder::<(), _>::new()
                     .with_changes(node)
-                    .with_tenant_id(access_token),
+                    .with_access_token(access_token),
             )
             .caused_by(trc::location!())?
             .commit_point();
@@ -513,7 +512,7 @@ async fn copy_container(
                 .delete_document(document_id)
                 .custom(
                     ObjectIndexBuilder::<_, ()>::new()
-                        .with_tenant_id(access_token)
+                        .with_access_token(access_token)
                         .with_current(node),
                 )
                 .caused_by(trc::location!())?

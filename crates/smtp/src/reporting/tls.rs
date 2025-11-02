@@ -303,10 +303,10 @@ impl TlsReporting for Server {
                 continue;
             };
 
-            if let Some(serialized_size) = serialized_size.as_deref_mut() {
-                if serde::Serialize::serialize(&tls, serialized_size).is_err() {
-                    continue;
-                }
+            if let Some(serialized_size) = serialized_size.as_deref_mut()
+                && serde::Serialize::serialize(&tls, serialized_size).is_err()
+            {
+                continue;
             }
 
             // Group duplicates

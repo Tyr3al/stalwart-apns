@@ -8,7 +8,7 @@ use compact_str::ToCompactString;
 
 use crate::{
     Command,
-    protocol::{ProtocolVersion, copy_move},
+    protocol::copy_move,
     receiver::{Request, bad},
     utf7::utf7_maybe_decode,
 };
@@ -16,7 +16,7 @@ use crate::{
 use super::parse_sequence_set;
 
 impl Request<Command> {
-    pub fn parse_copy_move(self, version: ProtocolVersion) -> trc::Result<copy_move::Arguments> {
+    pub fn parse_copy_move(self, is_utf8: bool) -> trc::Result<copy_move::Arguments> {
         if self.tokens.len() > 1 {
             let mut tokens = self.tokens.into_iter();
 
@@ -34,7 +34,7 @@ impl Request<Command> {
                         .ok_or_else(|| bad(self.tag.to_compact_string(), "Missing mailbox name."))?
                         .unwrap_string()
                         .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                    version,
+                    is_utf8,
                 ),
                 tag: self.tag,
             })
@@ -47,7 +47,7 @@ impl Request<Command> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        protocol::{ProtocolVersion, Sequence, copy_move},
+        protocol::{Sequence, copy_move},
         receiver::Receiver,
     };
 
@@ -59,7 +59,7 @@ mod tests {
             receiver
                 .parse(&mut "A003 COPY 2:4 MEETING\r\n".as_bytes().iter())
                 .unwrap()
-                .parse_copy_move(ProtocolVersion::Rev1)
+                .parse_copy_move(false)
                 .unwrap(),
             copy_move::Arguments {
                 sequence_set: Sequence::Range {
@@ -74,7 +74,7 @@ mod tests {
             receiver
                 .parse(&mut "A003 COPY 2:4 \"You &- Me\"\r\n".as_bytes().iter())
                 .unwrap()
-                .parse_copy_move(ProtocolVersion::Rev1)
+                .parse_copy_move(false)
                 .unwrap(),
             copy_move::Arguments {
                 sequence_set: Sequence::Range {

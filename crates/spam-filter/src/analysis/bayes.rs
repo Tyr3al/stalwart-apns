@@ -24,20 +24,21 @@ pub trait SpamFilterAnalyzeBayes: Sync + Send {
 
 impl SpamFilterAnalyzeBayes for Server {
     async fn spam_filter_analyze_bayes_classify(&self, ctx: &mut SpamFilterContext<'_>) {
-        if let Some(config) = &self.core.spam.bayes {
-            if !ctx.result.has_tag("SPAM_TRAP") && !ctx.result.has_tag("TRUSTED_REPLY") {
-                match self.bayes_classify(ctx).await {
-                    Ok(Some(score)) => {
-                        if score > config.score_spam {
-                            ctx.result.add_tag("BAYES_SPAM");
-                        } else if score < config.score_ham {
-                            ctx.result.add_tag("BAYES_HAM");
-                        }
+        if let Some(config) = &self.core.spam.bayes
+            && !ctx.result.has_tag("SPAM_TRAP")
+            && !ctx.result.has_tag("TRUSTED_REPLY")
+        {
+            match self.bayes_classify(ctx).await {
+                Ok(Some(score)) => {
+                    if score > config.score_spam {
+                        ctx.result.add_tag("BAYES_SPAM");
+                    } else if score < config.score_ham {
+                        ctx.result.add_tag("BAYES_HAM");
                     }
-                    Ok(None) => (),
-                    Err(err) => {
-                        trc::error!(err.span_id(ctx.input.span_id).caused_by(trc::location!()));
-                    }
+                }
+                Ok(None) => (),
+                Err(err) => {
+                    trc::error!(err.span_id(ctx.input.span_id).caused_by(trc::location!()));
                 }
             }
         }

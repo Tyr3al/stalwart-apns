@@ -47,10 +47,9 @@ impl SessionManager for SmtpSessionManager {
             && session.init_conn().await
             && session.handle_conn().await
             && session.instance.acceptor.is_tls()
+            && let Ok(mut session) = session.into_tls().await
         {
-            if let Ok(mut session) = session.into_tls().await {
-                session.handle_conn().await;
-            }
+            session.handle_conn().await;
         }
     }
 
@@ -89,18 +88,16 @@ impl<T: SessionStream> Session<T> {
                     .get_trusted_sieve_script(&name, self.data.session_id)
                     .map(|s| (s, name))
             })
-        {
-            if let ScriptResult::Reject(message) = self
+            && let ScriptResult::Reject(message) = self
                 .run_script(
                     script_id,
                     script.clone(),
                     self.build_script_parameters("connect"),
                 )
                 .await
-            {
-                let _ = self.write(message.as_bytes()).await;
-                return false;
-            }
+        {
+            let _ = self.write(message.as_bytes()).await;
+            return false;
         }
 
         // Milter filtering

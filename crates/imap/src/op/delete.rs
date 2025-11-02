@@ -4,20 +4,18 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::time::Instant;
-
+use super::ImapContext;
 use crate::{
     core::{Session, SessionData},
     spawn_op,
 };
 use common::listener::SessionStream;
 use directory::Permission;
-use email::mailbox::destroy::MailboxDestroy;
+use email::mailbox::destroy::{MailboxDestroy, MailboxDestroyError};
 use imap_proto::{
     Command, ResponseCode, StatusResponse, protocol::delete::Arguments, receiver::Request,
 };
-
-use super::ImapContext;
+use std::time::Instant;
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_delete(&mut self, requests: Vec<Request<Command>>) -> trc::Result<()> {
@@ -25,11 +23,11 @@ impl<T: SessionStream> Session<T> {
         self.assert_has_permission(Permission::ImapDelete)?;
 
         let data = self.state.session_data();
-        let version = self.version;
+        let is_utf8 = self.is_utf8;
 
         spawn_op!(data, {
             for request in requests {
-                match request.parse_delete(version) {
+                match request.parse_delete(is_utf8) {
                     Ok(argument) => match data.delete_folder(argument).await {
                         Ok(response) => {
                             data.write_bytes(response.into_bytes()).await?;
@@ -80,10 +78,29 @@ impl<T: SessionStream> SessionData<T> {
             .await
             .imap_ctx(&arguments.tag, trc::location!())?
         {
+            let (code, message) = match err {
+                MailboxDestroyError::CannotDestroy => {
+                    (ResponseCode::NoPerm, "You cannot delete system mailboxes")
+                }
+                MailboxDestroyError::Forbidden => (
+                    ResponseCode::NoPerm,
+                    "You do not have enough permissions to delete this mailbox",
+                ),
+                MailboxDestroyError::HasChildren => {
+                    (ResponseCode::HasChildren, "Mailbox has children")
+                }
+                MailboxDestroyError::HasEmails => (ResponseCode::HasChildren, "Mailbox has emails"),
+                MailboxDestroyError::NotFound => (ResponseCode::NonExistent, "Mailbox not found"),
+                MailboxDestroyError::AssertionFailed => (
+                    ResponseCode::Cannot,
+                    "Another process is accessing this mailbox",
+                ),
+            };
+
             return Err(trc::ImapEvent::Error
                 .into_err()
-                .details(err.description.unwrap_or("Delete failed".into()))
-                .code(ResponseCode::from(err.type_))
+                .details(message)
+                .code(code)
                 .id(arguments.tag));
         }
 

@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::{sync::Arc, time::Instant};
-
+use super::{ImapContext, ToModSeq};
+use crate::core::{SavedSearch, SelectedMailbox, Session, State};
+use common::listener::SessionStream;
 use directory::Permission;
 use imap_proto::{
     Command, ResponseCode, StatusResponse,
@@ -16,12 +17,8 @@ use imap_proto::{
     },
     receiver::Request,
 };
-
-use crate::core::{SavedSearch, SelectedMailbox, Session, State};
-use common::listener::SessionStream;
-use jmap_proto::types::id::Id;
-
-use super::{ImapContext, ToModSeq};
+use std::{sync::Arc, time::Instant};
+use types::id::Id;
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_select(&mut self, request: Request<Command>) -> trc::Result<()> {
@@ -35,7 +32,7 @@ impl<T: SessionStream> Session<T> {
         let op_start = Instant::now();
         let is_select = request.command == Command::Select;
         let command = request.command;
-        let arguments = request.parse_select(self.version)?;
+        let arguments = request.parse_select(self.is_utf8)?;
         let data = self.state.session_data();
 
         // Refresh mailboxes
@@ -57,6 +54,7 @@ impl<T: SessionStream> Session<T> {
 
             // Build new state
             let is_rev2 = self.version.is_rev2();
+            let is_utf8 = self.is_utf8;
             let mailbox_state = data.mailbox_state(&mailbox).unwrap();
             let total_messages = state.total_messages;
             let highest_modseq = if is_condstore {
@@ -99,7 +97,6 @@ impl<T: SessionStream> Session<T> {
                         mailbox.clone(),
                         true,
                         true,
-                        is_rev2,
                         false,
                         Instant::now(),
                     )
@@ -130,6 +127,7 @@ impl<T: SessionStream> Session<T> {
                 uid_next: mailbox_state.uid_next as u32,
                 closed_previous,
                 is_rev2,
+                is_utf8,
                 highest_modseq,
                 mailbox_id: Id::from_parts(mailbox.id.account_id, mailbox.id.mailbox_id)
                     .to_string(),

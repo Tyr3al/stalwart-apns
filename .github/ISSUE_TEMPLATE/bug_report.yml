@@ -1,12 +1,12 @@
-name: I think I found a bug
-description: File a bug report issue. If you have a question or are experiencing a problem, please start a [new discussion](https://github.com/stalwartlabs/stalwart/discussions/new?category=q-a) instead.
-title: "🐛: "
+name: I found a bug
+description: Most reported issues turn out to be configuration problems rather than actual bugs. If you are not 100% certain this is a bug, please start a new discussion instead.
+title: "🪲: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to fill out this bug report! Use this form only for reporting bugs. If you have a question or problem, please use the [Q&A discussion](https://github.com/stalwartlabs/stalwart/discussions/new?category=q-a).
+        Thanks for taking the time to fill out this bug report! Most reported issues turn out to be configuration problems rather than actual bugs. If you are not 100% certain this is a bug, please start a new [discussion](https://github.com/stalwartlabs/stalwart/discussions/new?category=q-a) instead.
   - type: textarea
     id: what-happened
     attributes:
@@ -31,9 +31,10 @@ body:
       label: Version
       description: What version of our software are you running?
       options:
+        - v0.14.x
+        - v0.13.x
         - v0.12.x
-        - v0.11.x
-        - v0.10.x or lower
+        - v0.11.x or lower
     validations:
       required: true
   - type: dropdown

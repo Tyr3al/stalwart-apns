@@ -36,6 +36,7 @@ pub struct Response {
     pub uid_validity: u32,
     pub uid_next: u32,
     pub is_rev2: bool,
+    pub is_utf8: bool,
     pub closed_previous: bool,
     pub highest_modseq: Option<HighestModSeq>,
     pub mailbox_id: String,
@@ -66,7 +67,8 @@ impl ImapResponse for Response {
             );
         }
         if self.is_rev2 {
-            self.mailbox.serialize(&mut buf, self.is_rev2, false);
+            self.mailbox
+                .serialize(&mut buf, self.is_rev2, self.is_utf8, false);
         } else {
             buf.extend_from_slice(b"* ");
             buf.extend_from_slice(self.recent_messages.to_string().as_bytes());
@@ -146,6 +148,7 @@ mod tests {
                     uid_next: 4392,
                     closed_previous: false,
                     is_rev2: true,
+                    is_utf8: true,
                     highest_modseq: HighestModSeq::new(100).into(),
                     mailbox_id: "abc".into(),
                 },
@@ -182,6 +185,7 @@ mod tests {
                     uid_next: 4392,
                     closed_previous: true,
                     is_rev2: true,
+                    is_utf8: true,
                     highest_modseq: None,
                     mailbox_id: "abc".into(),
                 },

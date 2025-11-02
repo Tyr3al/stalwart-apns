@@ -47,6 +47,10 @@ pub struct GroupwareConfig {
 
     // File storage settings
     pub max_file_size: usize,
+
+    // Sharing settings
+    pub max_shares_per_item: usize,
+    pub allow_directory_query: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
@@ -84,7 +88,7 @@ impl GroupwareConfig {
             live_property_size: config.property("dav.property.max-size.live").unwrap_or(250),
             assisted_discovery: config
                 .property("dav.collection.assisted-discovery")
-                .unwrap_or(false),
+                .unwrap_or(true),
             max_lock_timeout: config
                 .property::<Duration>("dav.lock.max-timeout")
                 .map(|d| d.as_secs())
@@ -178,6 +182,10 @@ impl GroupwareConfig {
             } else {
                 None
             },
+            max_shares_per_item: config.property("sharing.max-shares-per-item").unwrap_or(10),
+            allow_directory_query: config
+                .property("sharing.allow-directory-query")
+                .unwrap_or(false),
             itip_http_rsvp_expiration: config
                 .property_or_default::<Duration>("calendar.scheduling.http-rsvp.expiration", "90d")
                 .map(|d| d.as_secs())

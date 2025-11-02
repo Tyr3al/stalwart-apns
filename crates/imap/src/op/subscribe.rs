@@ -4,20 +4,17 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::time::Instant;
-
+use super::ImapContext;
 use crate::{
     core::{Session, SessionData},
     spawn_op,
 };
 use common::{listener::SessionStream, storage::index::ObjectIndexBuilder};
-
 use directory::Permission;
 use imap_proto::{Command, ResponseCode, StatusResponse, receiver::Request};
-use jmap_proto::types::collection::Collection;
+use std::time::Instant;
 use store::write::BatchBuilder;
-
-use super::ImapContext;
+use types::collection::Collection;
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_subscribe(
@@ -29,7 +26,7 @@ impl<T: SessionStream> Session<T> {
         self.assert_has_permission(Permission::ImapSubscribe)?;
 
         let op_start = Instant::now();
-        let arguments = request.parse_subscribe(self.version)?;
+        let arguments = request.parse_subscribe(self.is_utf8)?;
         let data = self.state.session_data();
 
         spawn_op!(data, {
@@ -76,17 +73,17 @@ impl<T: SessionStream> SessionData<T> {
         // Verify if mailbox is already subscribed/unsubscribed
         for account in self.mailboxes.lock().iter_mut() {
             if account.account_id == account_id {
-                if let Some(mailbox) = account.mailbox_state.get(&mailbox_id) {
-                    if mailbox.is_subscribed == subscribe {
-                        return Err(trc::ImapEvent::Error
-                            .into_err()
-                            .details(if subscribe {
-                                "Mailbox is already subscribed."
-                            } else {
-                                "Mailbox is already unsubscribed."
-                            })
-                            .id(tag));
-                    }
+                if let Some(mailbox) = account.mailbox_state.get(&mailbox_id)
+                    && mailbox.is_subscribed == subscribe
+                {
+                    return Err(trc::ImapEvent::Error
+                        .into_err()
+                        .details(if subscribe {
+                            "Mailbox is already subscribed."
+                        } else {
+                            "Mailbox is already unsubscribed."
+                        })
+                        .id(tag));
                 }
                 break;
             }

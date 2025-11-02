@@ -186,7 +186,7 @@ impl<'x> RequestError<'x> {
         RequestError::blank(401, "Unauthorized", "You have to authenticate first.")
     }
 
-    pub fn unknown_capability(capability: &str) -> RequestError {
+    pub fn unknown_capability(capability: &'_ str) -> RequestError<'_> {
         RequestError {
             p_type: RequestErrorType::UnknownCapability,
             limit: None,
@@ -204,7 +204,7 @@ impl<'x> RequestError<'x> {
         }
     }
 
-    pub fn not_json(detail: &str) -> RequestError {
+    pub fn not_json(detail: &'_ str) -> RequestError<'_> {
         RequestError {
             p_type: RequestErrorType::NotJSON,
             limit: None,

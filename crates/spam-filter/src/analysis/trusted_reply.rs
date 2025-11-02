@@ -64,17 +64,15 @@ impl SpamFilterAnalyzeTrustedReply for Server {
         if let (Some(hold_time), Some(message_id)) = (
             self.core.spam.expiry.trusted_reply,
             ctx.input.message.message_id(),
-        ) {
-            if let Err(err) = self
-                .in_memory_store()
-                .key_set(
-                    KeyValue::with_prefix(KV_TRUSTED_REPLY, message_id.as_bytes(), vec![])
-                        .expires(hold_time),
-                )
-                .await
-            {
-                trc::error!(err.span_id(ctx.input.span_id).caused_by(trc::location!()));
-            }
+        ) && let Err(err) = self
+            .in_memory_store()
+            .key_set(
+                KeyValue::with_prefix(KV_TRUSTED_REPLY, message_id.as_bytes(), vec![])
+                    .expires(hold_time),
+            )
+            .await
+        {
+            trc::error!(err.span_id(ctx.input.span_id).caused_by(trc::location!()));
         }
 
         if self

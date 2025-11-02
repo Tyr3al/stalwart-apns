@@ -9,23 +9,23 @@ use crate::{
     auth::{AccessToken, ResourceToken, TenantInfo},
     config::smtp::{
         auth::{ArcSealer, DkimSigner, LazySignature, ResolvedSignature, build_signature},
-        queue::RelayHost,
+        queue::{
+            ConnectionStrategy, DEFAULT_QUEUE_NAME, MxConfig, QueueExpiry, QueueName,
+            QueueStrategy, RequireOptional, RoutingStrategy, TlsStrategy, VirtualQueue,
+        },
     },
-    ipc::{BroadcastEvent, StateEvent},
+    ipc::{BroadcastEvent, PushEvent, PushNotification},
 };
-use directory::{Directory, QueryBy, Type, backend::internal::manage::ManageDirectory};
-use jmap_proto::types::{
-    blob::BlobId,
-    collection::{Collection, SyncCollection},
-    property::Property,
-    state::StateChange,
-    type_state::DataType,
-};
+use directory::{Directory, QueryParams, Type, backend::internal::manage::ManageDirectory};
+use mail_auth::IpLookupStrategy;
 use sieve::Sieve;
-use std::sync::Arc;
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use store::{
-    BitmapKey, BlobClass, BlobStore, Deserialize, FtsStore, InMemoryStore, IndexKey, IterateParams,
-    Key, LogKey, SUBSPACE_LOGS, SerializeInfallible, Store, U32_LEN, U64_LEN, ValueKey,
+    BitmapKey, BlobStore, Deserialize, FtsStore, InMemoryStore, IndexKey, IterateParams, Key,
+    LogKey, SUBSPACE_LOGS, SerializeInfallible, Store, U32_LEN, U64_LEN, ValueKey,
     dispatch::DocumentSet,
     roaring::RoaringBitmap,
     write::{
@@ -34,7 +34,14 @@ use store::{
     },
 };
 use trc::AddContext;
-use utils::BlobHash;
+use types::{
+    blob::{BlobClass, BlobId},
+    blob_hash::BlobHash,
+    collection::{Collection, SyncCollection},
+    field::{EmailField, Field},
+    type_state::{DataType, StateChange},
+};
+use utils::{map::bitmap::Bitmap, snowflake::SnowflakeIdGenerator};
 
 impl Server {
     #[inline(always)]
@@ -183,16 +190,148 @@ impl Server {
         })
     }
 
-    pub fn get_relay_host(&self, name: &str, session_id: u64) -> Option<&RelayHost> {
-        self.core.smtp.queue.relay_hosts.get(name).or_else(|| {
-            trc::event!(
-                Smtp(trc::SmtpEvent::RemoteIdNotFound),
-                Id = name.to_string(),
-                SpanId = session_id,
-            );
+    pub fn get_route_or_default(&self, name: &str, session_id: u64) -> &RoutingStrategy {
+        static LOCAL_GATEWAY: RoutingStrategy = RoutingStrategy::Local;
+        static MX_GATEWAY: RoutingStrategy = RoutingStrategy::Mx(MxConfig {
+            max_mx: 5,
+            max_multi_homed: 2,
+            ip_lookup_strategy: IpLookupStrategy::Ipv4thenIpv6,
+        });
+        self.core
+            .smtp
+            .queue
+            .routing_strategy
+            .get(name)
+            .unwrap_or_else(|| match name {
+                "local" => &LOCAL_GATEWAY,
+                "mx" => &MX_GATEWAY,
+                _ => {
+                    trc::event!(
+                        Smtp(trc::SmtpEvent::IdNotFound),
+                        Id = name.to_string(),
+                        Details = "Gateway not found",
+                        SpanId = session_id,
+                    );
+                    &MX_GATEWAY
+                }
+            })
+    }
 
-            None
-        })
+    pub fn get_virtual_queue_or_default(&self, name: &QueueName) -> &VirtualQueue {
+        static DEFAULT_QUEUE: VirtualQueue = VirtualQueue { threads: 25 };
+        self.core
+            .smtp
+            .queue
+            .virtual_queues
+            .get(name)
+            .unwrap_or_else(|| {
+                if name != &DEFAULT_QUEUE_NAME {
+                    trc::event!(
+                        Smtp(trc::SmtpEvent::IdNotFound),
+                        Id = name.to_string(),
+                        Details = "Virtual queue not found",
+                    );
+                }
+
+                &DEFAULT_QUEUE
+            })
+    }
+
+    pub fn get_queue_or_default(&self, name: &str, session_id: u64) -> &QueueStrategy {
+        static DEFAULT_SCHEDULE: LazyLock<QueueStrategy> = LazyLock::new(|| QueueStrategy {
+            retry: vec![
+                120,  // 2 minutes
+                300,  // 5 minutes
+                600,  // 10 minutes
+                900,  // 15 minutes
+                1800, // 30 minutes
+                3600, // 1 hour
+                7200, // 2 hours
+            ],
+            notify: vec![
+                86400,  // 1 day
+                259200, // 3 days
+            ],
+            expiry: QueueExpiry::Ttl(432000), // 5 days
+            virtual_queue: QueueName::default(),
+        });
+        self.core
+            .smtp
+            .queue
+            .queue_strategy
+            .get(name)
+            .unwrap_or_else(|| {
+                if name != "default" {
+                    trc::event!(
+                        Smtp(trc::SmtpEvent::IdNotFound),
+                        Id = name.to_string(),
+                        Details = "Queue strategy not found",
+                        SpanId = session_id,
+                    );
+                }
+
+                &DEFAULT_SCHEDULE
+            })
+    }
+
+    pub fn get_tls_or_default(&self, name: &str, session_id: u64) -> &TlsStrategy {
+        static DEFAULT_TLS: TlsStrategy = TlsStrategy {
+            dane: RequireOptional::Optional,
+            mta_sts: RequireOptional::Optional,
+            tls: RequireOptional::Optional,
+            allow_invalid_certs: false,
+            timeout_tls: Duration::from_secs(3 * 60),
+            timeout_mta_sts: Duration::from_secs(5 * 60),
+        };
+        self.core
+            .smtp
+            .queue
+            .tls_strategy
+            .get(name)
+            .unwrap_or_else(|| {
+                if name != "default" {
+                    trc::event!(
+                        Smtp(trc::SmtpEvent::IdNotFound),
+                        Id = name.to_string(),
+                        Details = "TLS strategy not found",
+                        SpanId = session_id,
+                    );
+                }
+
+                &DEFAULT_TLS
+            })
+    }
+
+    pub fn get_connection_or_default(&self, name: &str, session_id: u64) -> &ConnectionStrategy {
+        static DEFAULT_CONNECTION: ConnectionStrategy = ConnectionStrategy {
+            source_ipv4: Vec::new(),
+            source_ipv6: Vec::new(),
+            ehlo_hostname: None,
+            timeout_connect: Duration::from_secs(5 * 60),
+            timeout_greeting: Duration::from_secs(5 * 60),
+            timeout_ehlo: Duration::from_secs(5 * 60),
+            timeout_mail: Duration::from_secs(5 * 60),
+            timeout_rcpt: Duration::from_secs(5 * 60),
+            timeout_data: Duration::from_secs(10 * 60),
+        };
+
+        self.core
+            .smtp
+            .queue
+            .connection_strategy
+            .get(name)
+            .unwrap_or_else(|| {
+                if name != "default" {
+                    trc::event!(
+                        Smtp(trc::SmtpEvent::IdNotFound),
+                        Id = name.to_string(),
+                        Details = "Connection strategy not found",
+                        SpanId = session_id,
+                    );
+                }
+
+                &DEFAULT_CONNECTION
+            })
     }
 
     pub async fn get_used_quota(&self, account_id: u32) -> trc::Result<i64> {
@@ -214,14 +353,14 @@ impl Server {
                         account_id,
                         collection: Collection::Email.into(),
                         document_id: 0,
-                        field: Property::Size.into(),
+                        field: EmailField::Size.into(),
                         key: 0u32.serialize(),
                     },
                     IndexKey {
                         account_id,
                         collection: Collection::Email.into(),
                         document_id: u32::MAX,
-                        field: Property::Size.into(),
+                        field: EmailField::Size.into(),
                         key: u32::MAX.serialize(),
                     },
                 )
@@ -273,16 +412,16 @@ impl Server {
         // SPDX-License-Identifier: LicenseRef-SEL
 
         #[cfg(feature = "enterprise")]
-        if self.core.is_enterprise_edition() {
-            if let Some(tenant) = quotas.tenant.filter(|tenant| tenant.quota != 0) {
-                let used_quota = self.get_used_quota(tenant.id).await? as u64;
+        if self.core.is_enterprise_edition()
+            && let Some(tenant) = quotas.tenant.filter(|tenant| tenant.quota != 0)
+        {
+            let used_quota = self.get_used_quota(tenant.id).await? as u64;
 
-                if used_quota + item_size > tenant.quota {
-                    return Err(trc::LimitEvent::TenantQuota
-                        .into_err()
-                        .ctx(trc::Key::Limit, tenant.quota)
-                        .ctx(trc::Key::Size, used_quota));
-                }
+            if used_quota + item_size > tenant.quota {
+                return Err(trc::LimitEvent::TenantQuota
+                    .into_err()
+                    .ctx(trc::Key::Limit, tenant.quota)
+                    .ctx(trc::Key::Size, used_quota));
             }
         }
 
@@ -312,35 +451,35 @@ impl Server {
                 .core
                 .storage
                 .directory
-                .query(QueryBy::Id(account_id), false)
+                .query(QueryParams::id(account_id).with_return_member_of(false))
                 .await
                 .add_context(|err| err.caused_by(trc::location!()).account_id(account_id))?
             {
-                quotas.quota = principal.quota();
+                quotas.quota = principal.quota().unwrap_or_default();
 
                 // SPDX-SnippetBegin
                 // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
                 // SPDX-License-Identifier: LicenseRef-SEL
 
                 #[cfg(feature = "enterprise")]
-                if self.core.is_enterprise_edition() {
-                    if let Some(tenant_id) = principal.tenant() {
-                        quotas.tenant = TenantInfo {
-                            id: tenant_id,
-                            quota: self
-                                .core
-                                .storage
-                                .directory
-                                .query(QueryBy::Id(tenant_id), false)
-                                .await
-                                .add_context(|err| {
-                                    err.caused_by(trc::location!()).account_id(tenant_id)
-                                })?
-                                .map(|tenant| tenant.quota())
-                                .unwrap_or_default(),
-                        }
-                        .into();
+                if self.core.is_enterprise_edition()
+                    && let Some(tenant_id) = principal.tenant()
+                {
+                    quotas.tenant = TenantInfo {
+                        id: tenant_id,
+                        quota: self
+                            .core
+                            .storage
+                            .directory
+                            .query(QueryParams::id(tenant_id).with_return_member_of(false))
+                            .await
+                            .add_context(|err| {
+                                err.caused_by(trc::location!()).account_id(tenant_id)
+                            })?
+                            .and_then(|tenant| tenant.quota())
+                            .unwrap_or_default(),
                     }
+                    .into();
                 }
 
                 // SPDX-SnippetEnd
@@ -364,7 +503,7 @@ impl Server {
                 account_id,
                 collection: collection.into(),
                 document_id,
-                class: ValueClass::Property(Property::Value.into()),
+                class: ValueClass::Property(Field::ARCHIVE.into()),
             })
             .await
             .add_context(|err| {
@@ -381,9 +520,8 @@ impl Server {
         account_id: u32,
         collection: Collection,
         document_id: u32,
-        property: impl AsRef<Property> + Sync + Send,
+        property: Field,
     ) -> trc::Result<Option<Archive<AlignedBytes>>> {
-        let property = property.as_ref();
         self.core
             .storage
             .data
@@ -424,13 +562,13 @@ impl Server {
                         account_id,
                         collection,
                         document_id: documents.min(),
-                        class: ValueClass::Property(Property::Value.into()),
+                        class: ValueClass::Property(Field::ARCHIVE.into()),
                     },
                     ValueKey {
                         account_id,
                         collection,
                         document_id: documents.max(),
-                        class: ValueClass::Property(Property::Value.into()),
+                        class: ValueClass::Property(Field::ARCHIVE.into()),
                     },
                 ),
                 |key, value| {
@@ -512,20 +650,30 @@ impl Server {
 
         if let Some(changes) = builder.changes() {
             for (account_id, changed_collections) in changes {
-                let mut state_change =
-                    StateChange::new(account_id, assigned_ids.last_change_id(account_id)?);
+                let mut state_change = StateChange::new(account_id);
                 for changed_collection in changed_collections.changed_containers {
-                    if let Some(data_type) = DataType::try_from_id(changed_collection, true) {
+                    if let Some(data_type) = DataType::try_from_sync(changed_collection, true) {
                         state_change.set_change(data_type);
                     }
                 }
                 for changed_collection in changed_collections.changed_items {
-                    if let Some(data_type) = DataType::try_from_id(changed_collection, false) {
+                    if let Some(data_type) = DataType::try_from_sync(changed_collection, false) {
                         state_change.set_change(data_type);
                     }
                 }
                 if state_change.has_changes() {
-                    self.broadcast_state_change(state_change).await;
+                    self.broadcast_push_notification(PushNotification::StateChange(
+                        state_change.with_change_id(assigned_ids.last_change_id(account_id)?),
+                    ))
+                    .await;
+                }
+                if let Some(change_id) = changed_collections.share_notification_id {
+                    self.broadcast_push_notification(PushNotification::StateChange(StateChange {
+                        account_id,
+                        change_id,
+                        types: Bitmap::from_iter([DataType::ShareNotification]),
+                    }))
+                    .await;
                 }
             }
         }
@@ -533,91 +681,94 @@ impl Server {
         Ok(assigned_ids)
     }
 
-    pub async fn delete_changes(&self, account_id: u32, max_entries: usize) -> trc::Result<()> {
-        for sync_collection in [
-            SyncCollection::Email,
-            SyncCollection::Thread,
-            SyncCollection::Identity,
-            SyncCollection::EmailSubmission,
-            SyncCollection::SieveScript,
-            SyncCollection::FileNode,
-            SyncCollection::AddressBook,
-            SyncCollection::Calendar,
-        ] {
-            let collection = sync_collection.into();
-            let from_key = LogKey {
-                account_id,
-                collection,
-                change_id: 0,
-            };
-            let to_key = LogKey {
-                account_id,
-                collection,
-                change_id: u64::MAX,
-            };
+    pub async fn delete_changes(
+        &self,
+        account_id: u32,
+        max_entries: Option<usize>,
+        max_duration: Option<Duration>,
+    ) -> trc::Result<()> {
+        if let Some(max_entries) = max_entries {
+            for sync_collection in [
+                SyncCollection::Email,
+                SyncCollection::Thread,
+                SyncCollection::Identity,
+                SyncCollection::EmailSubmission,
+                SyncCollection::SieveScript,
+                SyncCollection::FileNode,
+                SyncCollection::AddressBook,
+                SyncCollection::Calendar,
+            ] {
+                let collection = sync_collection.into();
+                let from_key = LogKey {
+                    account_id,
+                    collection,
+                    change_id: 0,
+                };
+                let to_key = LogKey {
+                    account_id,
+                    collection,
+                    change_id: u64::MAX,
+                };
 
-            let mut first_change_id = 0;
-            let mut num_changes = 0;
+                let mut first_change_id = 0;
+                let mut num_changes = 0;
 
-            self.store()
-                .iterate(
-                    IterateParams::new(from_key, to_key)
-                        .descending()
-                        .no_values(),
-                    |key, _| {
-                        first_change_id = key.deserialize_be_u64(key.len() - U64_LEN)?;
-                        num_changes += 1;
-
-                        Ok(num_changes <= max_entries)
-                    },
-                )
-                .await
-                .caused_by(trc::location!())?;
-
-            if num_changes > max_entries {
                 self.store()
-                    .delete_range(
-                        LogKey {
-                            account_id,
-                            collection,
-                            change_id: 0,
-                        },
-                        LogKey {
-                            account_id,
-                            collection,
-                            change_id: first_change_id,
+                    .iterate(
+                        IterateParams::new(from_key, to_key)
+                            .descending()
+                            .no_values(),
+                        |key, _| {
+                            first_change_id = key.deserialize_be_u64(key.len() - U64_LEN)?;
+                            num_changes += 1;
+
+                            Ok(num_changes <= max_entries)
                         },
                     )
                     .await
                     .caused_by(trc::location!())?;
 
-                // Delete vanished items
-                if let Some(vanished_collection) =
-                    sync_collection.vanished_collection().map(u8::from)
-                {
+                if num_changes > max_entries {
                     self.store()
                         .delete_range(
                             LogKey {
                                 account_id,
-                                collection: vanished_collection,
+                                collection,
                                 change_id: 0,
                             },
                             LogKey {
                                 account_id,
-                                collection: vanished_collection,
+                                collection,
                                 change_id: first_change_id,
                             },
                         )
                         .await
                         .caused_by(trc::location!())?;
-                }
 
-                // Write truncation entry for cache
-                let mut batch = BatchBuilder::new();
-                batch
-                    .with_account_id(account_id)
-                    .with_collection(collection)
-                    .set(
+                    // Delete vanished items
+                    if let Some(vanished_collection) =
+                        sync_collection.vanished_collection().map(u8::from)
+                    {
+                        self.store()
+                            .delete_range(
+                                LogKey {
+                                    account_id,
+                                    collection: vanished_collection,
+                                    change_id: 0,
+                                },
+                                LogKey {
+                                    account_id,
+                                    collection: vanished_collection,
+                                    change_id: first_change_id,
+                                },
+                            )
+                            .await
+                            .caused_by(trc::location!())?;
+                    }
+
+                    // Write truncation entry for cache
+                    let mut batch = BatchBuilder::new();
+                    batch.with_account_id(account_id).set(
                         ValueClass::Any(AnyClass {
                             subspace: SUBSPACE_LOGS,
                             key: LogKey {
@@ -629,24 +780,43 @@ impl Server {
                         }),
                         Vec::new(),
                     );
-                self.store()
-                    .write(batch.build_all())
-                    .await
-                    .caused_by(trc::location!())?;
+                    self.store()
+                        .write(batch.build_all())
+                        .await
+                        .caused_by(trc::location!())?;
+                }
             }
         }
 
+        if let Some(max_duration) = max_duration {
+            self.store()
+                .delete_range(
+                    LogKey {
+                        account_id,
+                        collection: SyncCollection::ShareNotification.into(),
+                        change_id: 0,
+                    },
+                    LogKey {
+                        account_id,
+                        collection: SyncCollection::ShareNotification.into(),
+                        change_id: SnowflakeIdGenerator::from_duration(max_duration)
+                            .unwrap_or_default(),
+                    },
+                )
+                .await
+                .caused_by(trc::location!())?;
+        }
         Ok(())
     }
 
-    pub async fn broadcast_state_change(&self, state_change: StateChange) -> bool {
+    pub async fn broadcast_push_notification(&self, notification: PushNotification) -> bool {
         match self
             .inner
             .ipc
-            .state_tx
+            .push_tx
             .clone()
-            .send(StateEvent::Publish {
-                state_change,
+            .send(PushEvent::Publish {
+                notification,
                 broadcast: true,
             })
             .await
@@ -665,14 +835,14 @@ impl Server {
     }
 
     pub async fn cluster_broadcast(&self, event: BroadcastEvent) {
-        if let Some(broadcast_tx) = &self.inner.ipc.broadcast_tx.clone() {
-            if broadcast_tx.send(event).await.is_err() {
-                trc::event!(
-                    Server(trc::ServerEvent::ThreadError),
-                    Details = "Error sending broadcast event.",
-                    CausedBy = trc::location!()
-                );
-            }
+        if let Some(broadcast_tx) = &self.inner.ipc.broadcast_tx.clone()
+            && broadcast_tx.send(event).await.is_err()
+        {
+            trc::event!(
+                Server(trc::ServerEvent::ThreadError),
+                Details = "Error sending broadcast event.",
+                CausedBy = trc::location!()
+            );
         }
     }
 
@@ -751,6 +921,14 @@ impl Server {
             .count_principals(None, Type::Domain.into(), None)
             .await
             .caused_by(trc::location!())
+    }
+
+    #[cfg(not(feature = "enterprise"))]
+    pub async fn logo_resource(
+        &self,
+        _: &str,
+    ) -> trc::Result<Option<crate::manager::webadmin::Resource<Vec<u8>>>> {
+        Ok(None)
     }
 }
 

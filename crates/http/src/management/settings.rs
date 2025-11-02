@@ -91,20 +91,20 @@ impl ManageSettings for Server {
                     let mut total = 0;
                     let mut ids = Vec::new();
                     for key in settings.keys() {
-                        if let Some(id) = key.strip_suffix(&suffix) {
-                            if !id.is_empty() {
-                                if !has_filter {
-                                    if offset == 0 {
-                                        if limit == 0 || ids.len() < limit {
-                                            ids.push(id);
-                                        }
-                                    } else {
-                                        offset -= 1;
+                        if let Some(id) = key.strip_suffix(&suffix)
+                            && !id.is_empty()
+                        {
+                            if !has_filter {
+                                if offset == 0 {
+                                    if limit == 0 || ids.len() < limit {
+                                        ids.push(id);
                                     }
-                                    total += 1;
                                 } else {
-                                    ids.push(id);
+                                    offset -= 1;
                                 }
+                                total += 1;
+                            } else {
+                                ids.push(id);
                             }
                         }
                     }
@@ -318,10 +318,10 @@ impl ManageSettings for Server {
                                     {
                                         return Err(trc::ManageEvent::AssertFailed.into_err());
                                     }
-                                } else if let Some((key, _)) = values.first() {
-                                    if self.core.storage.config.get(key).await?.is_some() {
-                                        return Err(trc::ManageEvent::AssertFailed.into_err());
-                                    }
+                                } else if let Some((key, _)) = values.first()
+                                    && self.core.storage.config.get(key).await?.is_some()
+                                {
+                                    return Err(trc::ManageEvent::AssertFailed.into_err());
                                 }
                             }
 

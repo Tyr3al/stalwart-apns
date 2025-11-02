@@ -203,15 +203,11 @@ impl SessionConfig {
         session.rcpt.subaddressing = AddressMapping::parse(config, "session.rcpt.sub-addressing");
         session.milters = config
             .sub_keys("session.milter", ".hostname")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
             .into_iter()
             .filter_map(|id| parse_milter(config, &id, &has_rcpt_vars))
             .collect();
         session.hooks = config
             .sub_keys("session.hook", ".url")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
             .into_iter()
             .filter_map(|id| parse_hooks(config, &id, &has_rcpt_vars))
             .collect();

@@ -9,7 +9,7 @@ use crate::{
     op::ImapContext,
 };
 use ahash::AHashSet;
-use common::listener::SessionStream;
+use common::{ipc::PushNotification, listener::SessionStream};
 use directory::Permission;
 use imap_proto::{
     Command, StatusResponse,
@@ -20,11 +20,11 @@ use imap_proto::{
     },
     receiver::Request,
 };
-use jmap_proto::types::{collection::SyncCollection, type_state::DataType};
 use std::{sync::Arc, time::Instant};
 use store::query::log::Query;
 use tokio::io::AsyncReadExt;
 use trc::AddContext;
+use types::{collection::SyncCollection, type_state::DataType};
 use utils::map::bitmap::Bitmap;
 
 impl<T: SessionStream> Session<T> {
@@ -45,12 +45,13 @@ impl<T: SessionStream> Session<T> {
             _ => unreachable!(),
         };
         let is_rev2 = self.version.is_rev2();
+        let is_utf8 = self.is_utf8;
         let is_qresync = self.is_qresync;
 
-        // Register with state manager
-        let mut change_rx = self
+        // Register with push manager
+        let mut push_rx = self
             .server
-            .subscribe_state_manager(data.account_id, types)
+            .subscribe_push_manager(&data.access_token, types)
             .await
             .imap_ctx(&request.tag, trc::location!())?;
 
@@ -91,25 +92,34 @@ impl<T: SessionStream> Session<T> {
                         }
                     }
                 }
-                state_change = change_rx.recv() => {
-                    if let Some(state_change) = state_change {
+                push_notification = push_rx.recv() => {
+                    if let Some(push_notification) = push_notification {
                         let mut has_mailbox_changes = false;
                         let mut has_email_changes = false;
 
-                        for type_state in state_change.types {
-                            match type_state {
-                                DataType::Email | DataType::EmailDelivery => {
-                                    has_email_changes = true;
+                        match push_notification {
+                            PushNotification::StateChange(state_change) => {
+                                for type_state in state_change.types {
+                                    match type_state {
+                                        DataType::Email | DataType::EmailDelivery => {
+                                            has_email_changes = true;
+                                        }
+                                        DataType::Mailbox => {
+                                            has_mailbox_changes = true;
+                                        }
+                                        _ => {}
+                                    }
                                 }
-                                DataType::Mailbox => {
-                                    has_mailbox_changes = true;
-                                }
-                                _ => {}
-                            }
+                            },
+                            PushNotification::EmailPush(_) => {
+                                has_email_changes = true;
+                                has_mailbox_changes = true;
+                            },
+                            PushNotification::CalendarAlert(_) => (),
                         }
 
                         if has_mailbox_changes || has_email_changes {
-                            data.write_changes(&mailbox, has_mailbox_changes, has_email_changes, is_qresync, is_rev2).await?;
+                            data.write_changes(&mailbox, has_mailbox_changes, has_email_changes, is_qresync, is_rev2, is_utf8).await?;
                         }
                     } else {
                         self.write_bytes(&b"* BYE Server shutting down.\r\n"[..]).await.ok();
@@ -129,6 +139,7 @@ impl<T: SessionStream> SessionData<T> {
         check_emails: bool,
         is_qresync: bool,
         is_rev2: bool,
+        is_utf8: bool,
     ) -> trc::Result<()> {
         // Fetch all changed mailboxes
         if check_mailboxes {
@@ -147,7 +158,7 @@ impl<T: SessionStream> SessionData<T> {
                     attributes: vec![Attribute::NonExistent],
                     tags: vec![],
                 }
-                .serialize(&mut buf, is_rev2, false);
+                .serialize(&mut buf, is_rev2, is_utf8, false);
             }
 
             // List added mailboxes
@@ -157,7 +168,7 @@ impl<T: SessionStream> SessionData<T> {
                     attributes: vec![],
                     tags: vec![],
                 }
-                .serialize(&mut buf, is_rev2, false);
+                .serialize(&mut buf, is_rev2, is_utf8, false);
             }
             // Obtain status of changed mailboxes
             for mailbox_name in changes.changed {
@@ -173,7 +184,7 @@ impl<T: SessionStream> SessionData<T> {
                     )
                     .await
                 {
-                    status.serialize(&mut buf, is_rev2);
+                    status.serialize(&mut buf, is_utf8);
                 }
             }
 
@@ -202,7 +213,7 @@ impl<T: SessionStream> SessionData<T> {
                     .store()
                     .changes(
                         mailbox.id.account_id,
-                        SyncCollection::Email,
+                        SyncCollection::Email.into(),
                         Query::Since(modseq),
                     )
                     .await
@@ -242,7 +253,6 @@ impl<T: SessionStream> SessionData<T> {
                             mailbox.clone(),
                             true,
                             is_qresync,
-                            is_rev2,
                             false,
                             op_start,
                         )

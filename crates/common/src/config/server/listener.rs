@@ -45,11 +45,7 @@ impl Listeners {
         };
 
         // Parse servers
-        for id in config
-            .sub_keys("server.listener", ".protocol")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("server.listener", ".protocol") {
             servers.parse_server(config, id);
         }
         servers
@@ -216,11 +212,7 @@ impl Listeners {
     pub fn parse_tcp_acceptors(&mut self, config: &mut Config, inner: Arc<Inner>) {
         let resolver = Arc::new(CertificateResolver::new(inner.clone()));
 
-        for id_ in config
-            .sub_keys("server.listener", ".protocol")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id_ in config.sub_keys("server.listener", ".protocol") {
             let id = id_.as_str();
             // Build TLS config
             let acceptor = if config

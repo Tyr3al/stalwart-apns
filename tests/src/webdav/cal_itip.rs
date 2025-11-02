@@ -6,7 +6,7 @@
 
 use ahash::AHashMap;
 use calcard::{
-    common::PartialDateTime,
+    common::{IanaString, PartialDateTime},
     icalendar::{ICalendar, ICalendarProperty, ICalendarValue},
 };
 use groupware::scheduling::{
@@ -31,7 +31,7 @@ struct Test {
 enum Command {
     Put,
     Get,
-    Delete,
+    Delete(bool),
     Expect,
     Send,
     Reset,
@@ -81,7 +81,8 @@ pub fn test() {
                     "get" => Command::Get,
                     "expect" => Command::Expect,
                     "send" => Command::Send,
-                    "delete" => Command::Delete,
+                    "delete" => Command::Delete(false),
+                    "delete-force-send" => Command::Delete(true),
                     "reset" => Command::Reset,
                     "itip" => Command::Itip,
                     _ => panic!("Unknown command: {}", last_command),
@@ -185,7 +186,7 @@ pub fn test() {
                             );
                         });
                 }
-                Command::Delete => {
+                Command::Delete(force_send) => {
                     let account = command
                         .parameters
                         .first()
@@ -200,7 +201,8 @@ pub fn test() {
 
                     if let Some(ical) = store.remove(name) {
                         last_itip = Some(
-                            itip_cancel(&ical, &[account.to_string()]).map(|message| vec![message]),
+                            itip_cancel(&ical, &[account.to_string()], force_send)
+                                .map(|message| vec![message]),
                         );
                     } else {
                         panic!(
@@ -230,7 +232,7 @@ pub fn test() {
                     assert_eq!(
                         command.payload.trim(),
                         last_itip_str.trim(),
-                        "iTIP message mismatch for {} at line {}: expected {}, got {}",
+                        "iTIP message mismatch for {} at line {}\nEXPECTED {}\n\nRECEIVED {}",
                         command.test_name,
                         command.line_num,
                         command.payload,
@@ -420,11 +422,11 @@ fn normalize_ical(mut ical: ICalendar, map: &mut AHashMap<PartialDateTime, usize
         .filter(|(comp_id, _)| {
             ical.components[0]
                 .component_ids
-                .contains(&(*comp_id as u16))
+                .contains(&(*comp_id as u32))
         })
         .collect::<Vec<_>>();
     comps.sort_unstable_by_key(|(_, comp)| *comp);
-    ical.components[0].component_ids = comps.iter().map(|(comp_id, _)| *comp_id as u16).collect();
+    ical.components[0].component_ids = comps.iter().map(|(comp_id, _)| *comp_id as u32).collect();
 
     for comp in &mut ical.components {
         for entry in &mut comp.entries {

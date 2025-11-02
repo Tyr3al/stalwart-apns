@@ -13,7 +13,10 @@ use std::{
 use common::{
     Server,
     auth::{AccessToken, oauth::GrantType},
-    config::smtp::resolver::{Policy, Tlsa},
+    config::smtp::{
+        queue::MxConfig,
+        resolver::{Policy, Tlsa},
+    },
     psl,
 };
 use directory::backend::internal::manage;
@@ -341,7 +344,12 @@ async fn delivery_troubleshoot(
     };
 
     // Obtain remote host list
-    let hosts = if let Some(hosts) = mxs.to_remote_hosts(&domain, mxs.len()) {
+    let mx_config = MxConfig {
+        max_mx: mxs.len(),
+        max_multi_homed: 10,
+        ip_lookup_strategy: IpLookupStrategy::Ipv4thenIpv6,
+    };
+    let hosts = if let Some(hosts) = mxs.to_remote_hosts(&domain, &mx_config) {
         tx.send(DeliveryStage::MxLookupSuccess {
             mxs: mxs
                 .iter()

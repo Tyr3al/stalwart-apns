@@ -17,19 +17,11 @@ use crate::{
         metadata::MessageData,
     },
 };
-use common::{IDX_EMAIL, Server, auth::AccessToken, storage::index::ObjectIndexBuilder};
+use common::{Server, auth::AccessToken, storage::index::ObjectIndexBuilder};
 use directory::Permission;
 use groupware::{
     calendar::itip::{ItipIngest, ItipIngestError},
     scheduling::{ItipError, ItipMessages},
-};
-use jmap_proto::types::{
-    blob::BlobId,
-    collection::{Collection, SyncCollection},
-    id::Id,
-    keyword::Keyword,
-    property::Property,
-    value::{Object, Value},
 };
 use mail_parser::{
     Header, HeaderName, HeaderValue, Message, MessageParser, MimeHeaders, PartType,
@@ -45,7 +37,7 @@ use std::{
     time::{Duration, Instant},
 };
 use store::{
-    BlobClass, IndexKey, IndexKeyPrefix, IterateParams, U32_LEN,
+    IndexKey, IndexKeyPrefix, IterateParams, U32_LEN,
     ahash::AHashMap,
     query::Filter,
     roaring::RoaringBitmap,
@@ -53,11 +45,18 @@ use store::{
 };
 use store::{SerializeInfallible, rand::Rng};
 use trc::{AddContext, MessageIngestEvent};
+use types::{
+    blob::{BlobClass, BlobId},
+    collection::{Collection, SyncCollection},
+    field::{ContactField, EmailField, MailboxField, PrincipalField},
+    keyword::Keyword,
+};
 use utils::sanitize_email;
 
 #[derive(Default)]
 pub struct IngestedEmail {
-    pub id: Id,
+    pub document_id: u32,
+    pub thread_id: u32,
     pub change_id: u64,
     pub blob_id: BlobId,
     pub size: usize,
@@ -205,38 +204,36 @@ impl EmailIngest for Server {
                     }
 
                     // If the message is classified as spam, check whether the sender address is present in the user's address book
-                    if is_spam && self.core.spam.card_is_ham {
-                        if let Some(sender) = message
+                    if is_spam
+                        && self.core.spam.card_is_ham
+                        && let Some(sender) = message
                             .from()
                             .and_then(|s| s.first())
                             .and_then(|s| s.address())
                             .and_then(sanitize_email)
+                        && sender != deliver_to
+                        && is_sender_authenticated
+                        && !self
+                            .store()
+                            .filter(
+                                account_id,
+                                Collection::ContactCard,
+                                vec![Filter::eq(ContactField::Email, sender.into_bytes())],
+                            )
+                            .await
+                            .caused_by(trc::location!())?
+                            .results
+                            .is_empty()
+                    {
+                        is_spam = false;
+                        if self
+                            .core
+                            .spam
+                            .bayes
+                            .as_ref()
+                            .is_some_and(|config| config.auto_learn_card_is_ham)
                         {
-                            if sender != deliver_to
-                                && is_sender_authenticated
-                                && !self
-                                    .store()
-                                    .filter(
-                                        account_id,
-                                        Collection::ContactCard,
-                                        vec![Filter::eq(IDX_EMAIL, sender.into_bytes())],
-                                    )
-                                    .await
-                                    .caused_by(trc::location!())?
-                                    .results
-                                    .is_empty()
-                            {
-                                is_spam = false;
-                                if self
-                                    .core
-                                    .spam
-                                    .bayes
-                                    .as_ref()
-                                    .is_some_and(|config| config.auto_learn_card_is_ham)
-                                {
-                                    train_spam = Some(false);
-                                }
-                            }
+                            train_spam = Some(false);
                         }
                     }
 
@@ -315,75 +312,73 @@ impl EmailIngest for Server {
                                     .subtype()
                                     .is_some_and(|st| st.eq_ignore_ascii_case("calendar"))
                                 && ct.has_attribute("method")
-                        }) {
-                            if let Some(itip_message) = part.text_contents() {
-                                if itip_message.len()
-                                    < self.core.groupware.itip_inbound_max_ical_size
-                                {
-                                    if let Some(sender) = sender.get_or_insert_with(|| {
-                                        message
-                                            .from()
-                                            .and_then(|s| s.first())
-                                            .and_then(|s| s.address())
-                                            .and_then(sanitize_email)
-                                    }) {
-                                        match self
-                                            .itip_ingest(
-                                                params.access_token,
-                                                &resource_token,
-                                                sender,
-                                                itip_message,
-                                            )
-                                            .await
-                                        {
-                                            Ok(message) => {
-                                                if let Some(message) = message {
-                                                    itip_messages.push(message);
-                                                }
-                                                trc::event!(
-                                                    Calendar(
-                                                        trc::CalendarEvent::ItipMessageReceived
-                                                    ),
-                                                    SpanId = params.session_id,
-                                                    From = sender.to_string(),
-                                                    AccountId = account_id,
-                                                );
+                        }) && let Some(itip_message) = part.text_contents()
+                        {
+                            if itip_message.len() < self.core.groupware.itip_inbound_max_ical_size {
+                                if let Some(sender) = sender.get_or_insert_with(|| {
+                                    message
+                                        .from()
+                                        .and_then(|s| s.first())
+                                        .and_then(|s| s.address())
+                                        .and_then(sanitize_email)
+                                }) {
+                                    match self
+                                        .itip_ingest(
+                                            params.access_token,
+                                            &resource_token,
+                                            sender,
+                                            deliver_to,
+                                            itip_message,
+                                        )
+                                        .await
+                                    {
+                                        Ok(message) => {
+                                            if let Some(message) = message {
+                                                itip_messages.push(message);
                                             }
-                                            Err(ItipIngestError::Message(itip_error)) => {
-                                                match itip_error {
-                                                    ItipError::NothingToSend
-                                                    | ItipError::OtherSchedulingAgent => (),
-                                                    err => {
-                                                        trc::event!(
-                                                            Calendar(trc::CalendarEvent::ItipMessageError),
-                                                            SpanId = params.session_id,
-                                                            From = sender.to_string(),
-                                                            AccountId = account_id,
-                                                            Details = err.to_string(),
-                                                        )
-                                                    }
+                                            trc::event!(
+                                                Calendar(trc::CalendarEvent::ItipMessageReceived),
+                                                SpanId = params.session_id,
+                                                From = sender.to_string(),
+                                                AccountId = account_id,
+                                            );
+                                        }
+                                        Err(ItipIngestError::Message(itip_error)) => {
+                                            match itip_error {
+                                                ItipError::NothingToSend
+                                                | ItipError::OtherSchedulingAgent => (),
+                                                err => {
+                                                    trc::event!(
+                                                        Calendar(
+                                                            trc::CalendarEvent::ItipMessageError
+                                                        ),
+                                                        SpanId = params.session_id,
+                                                        From = sender.to_string(),
+                                                        AccountId = account_id,
+                                                        Details = err.to_string(),
+                                                    )
                                                 }
-                                            }
-                                            Err(ItipIngestError::Internal(err)) => {
-                                                trc::error!(err.caused_by(trc::location!()));
                                             }
                                         }
+                                        Err(ItipIngestError::Internal(err)) => {
+                                            trc::error!(err.caused_by(trc::location!()));
+                                        }
                                     }
-                                } else {
-                                    trc::event!(
-                                        Calendar(trc::CalendarEvent::ItipMessageError),
-                                        SpanId = params.session_id,
-                                        From = message
-                                            .from()
-                                            .and_then(|a| a.first())
-                                            .and_then(|a| a.address())
-                                            .map(|a| a.to_string()),
-                                        AccountId = account_id,
-                                        Details = "iMIP message too large",
-                                        Limit = self.core.groupware.itip_inbound_max_ical_size,
-                                        Size = itip_message.len(),
-                                    )
                                 }
+                            } else {
+                                trc::event!(
+                                    Calendar(trc::CalendarEvent::ItipMessageError),
+                                    SpanId = params.session_id,
+                                    From = message
+                                        .from()
+                                        .and_then(|a| a.first())
+                                        .and_then(|a| a.address())
+                                        .map(|a| a.to_string()),
+                                    AccountId = account_id,
+                                    Details = "iMIP message too large",
+                                    Limit = self.core.groupware.itip_inbound_max_ical_size,
+                                    Size = itip_message.len(),
+                                )
                             }
                         }
                     }
@@ -477,7 +472,8 @@ impl EmailIngest for Server {
                     );
 
                     return Ok(IngestedEmail {
-                        id: Id::default(),
+                        document_id: 0,
+                        thread_id: 0,
                         change_id: u64::MAX,
                         blob_id: BlobId::default(),
                         imap_uids: Vec::new(),
@@ -515,12 +511,12 @@ impl EmailIngest for Server {
                     part.offset_end += offset_start as u32;
                     part.offset_header += offset_start as u32;
 
-                    if let PartType::Message(sub_message) = &mut part.body {
-                        if sub_message.root_part().offset_header != 0 {
-                            sub_message.raw_message = raw_message.as_ref().into();
-                            part_iter_stack.push(part_iter);
-                            part_iter = sub_message.parts.iter_mut();
-                        }
+                    if let PartType::Message(sub_message) = &mut part.body
+                        && sub_message.root_part().offset_header != 0
+                    {
+                        sub_message.raw_message = raw_message.as_ref().into();
+                        part_iter_stack.push(part_iter);
+                        part_iter = sub_message.parts.iter_mut();
                     }
                 } else if let Some(iter) = part_iter_stack.pop() {
                     part_iter = iter;
@@ -544,56 +540,61 @@ impl EmailIngest for Server {
             IngestSource::Smtp { .. } => self.core.jmap.encrypt,
             IngestSource::Restore => false,
         };
-        if do_encrypt && !message.is_encrypted() {
-            if let Some(encrypt_params_) = self
-                .get_archive_by_property(account_id, Collection::Principal, 0, Property::Parameters)
+        if do_encrypt
+            && !message.is_encrypted()
+            && let Some(encrypt_params_) = self
+                .get_archive_by_property(
+                    account_id,
+                    Collection::Principal,
+                    0,
+                    PrincipalField::EncryptionKeys.into(),
+                )
                 .await
                 .caused_by(trc::location!())?
-            {
-                let encrypt_params = encrypt_params_
-                    .unarchive::<EncryptionParams>()
-                    .caused_by(trc::location!())?;
-                match message.encrypt(encrypt_params).await {
-                    Ok(new_raw_message) => {
-                        raw_message = Cow::from(new_raw_message);
-                        raw_message_len = raw_message.len() as u64;
-                        message = MessageParser::default()
-                            .parse(raw_message.as_ref())
-                            .ok_or_else(|| {
-                                trc::EventType::MessageIngest(trc::MessageIngestEvent::Error)
-                                    .ctx(trc::Key::Code, 550)
-                                    .ctx(
-                                        trc::Key::Reason,
-                                        "Failed to parse encrypted e-mail message.",
-                                    )
-                            })?;
+        {
+            let encrypt_params = encrypt_params_
+                .unarchive::<EncryptionParams>()
+                .caused_by(trc::location!())?;
+            match message.encrypt(encrypt_params).await {
+                Ok(new_raw_message) => {
+                    raw_message = Cow::from(new_raw_message);
+                    raw_message_len = raw_message.len() as u64;
+                    message = MessageParser::default()
+                        .parse(raw_message.as_ref())
+                        .ok_or_else(|| {
+                            trc::EventType::MessageIngest(trc::MessageIngestEvent::Error)
+                                .ctx(trc::Key::Code, 550)
+                                .ctx(
+                                    trc::Key::Reason,
+                                    "Failed to parse encrypted e-mail message.",
+                                )
+                        })?;
 
-                        // Remove contents from parsed message
-                        for part in &mut message.parts {
-                            match &mut part.body {
-                                PartType::Text(txt) | PartType::Html(txt) => {
-                                    *txt = Cow::from("");
-                                }
-                                PartType::Binary(bin) | PartType::InlineBinary(bin) => {
-                                    *bin = Cow::from(&[][..]);
-                                }
-                                PartType::Message(_) => {
-                                    part.body = PartType::Binary(Cow::from(&[][..]));
-                                }
-                                PartType::Multipart(_) => (),
+                    // Remove contents from parsed message
+                    for part in &mut message.parts {
+                        match &mut part.body {
+                            PartType::Text(txt) | PartType::Html(txt) => {
+                                *txt = Cow::from("");
                             }
+                            PartType::Binary(bin) | PartType::InlineBinary(bin) => {
+                                *bin = Cow::from(&[][..]);
+                            }
+                            PartType::Message(_) => {
+                                part.body = PartType::Binary(Cow::from(&[][..]));
+                            }
+                            PartType::Multipart(_) => (),
                         }
                     }
-                    Err(EncryptMessageError::Error(err)) => {
-                        trc::bail!(
-                            trc::StoreEvent::CryptoError
-                                .into_err()
-                                .caused_by(trc::location!())
-                                .reason(err)
-                        );
-                    }
-                    _ => unreachable!(),
                 }
+                Err(EncryptMessageError::Error(err)) => {
+                    trc::bail!(
+                        trc::StoreEvent::CryptoError
+                            .into_err()
+                            .caused_by(trc::location!())
+                            .reason(err)
+                    );
+                }
+                _ => unreachable!(),
             }
         }
 
@@ -686,7 +687,6 @@ impl EmailIngest for Server {
             .await
             .caused_by(trc::location!())?
             .last_change_id(account_id)?;
-        let id = Id::from_parts(thread_id, document_id);
 
         // Request FTS index
         self.notify_task_queue();
@@ -714,7 +714,8 @@ impl EmailIngest for Server {
         );
 
         Ok(IngestedEmail {
-            id,
+            document_id,
+            thread_id,
             change_id,
             blob_id: BlobId {
                 hash: blob_id.hash,
@@ -762,14 +763,14 @@ impl EmailIngest for Server {
                             account_id,
                             collection: Collection::Email.into(),
                             document_id: 0,
-                            field: Property::Subject.into(),
+                            field: EmailField::Subject.into(),
                             key: thread_name.clone(),
                         },
                         IndexKey {
                             account_id,
                             collection: Collection::Email.into(),
                             document_id: u32::MAX,
-                            field: Property::Subject.into(),
+                            field: EmailField::Subject.into(),
                             key: thread_name.clone(),
                         },
                     )
@@ -806,14 +807,14 @@ impl EmailIngest for Server {
                             account_id,
                             collection: Collection::Email.into(),
                             document_id: 0,
-                            field: Property::References.into(),
+                            field: EmailField::References.into(),
                             key: references.first().unwrap().to_vec(),
                         },
                         IndexKey {
                             account_id,
                             collection: Collection::Email.into(),
                             document_id: u32::MAX,
-                            field: Property::References.into(),
+                            field: EmailField::References.into(),
                             key: references.last().unwrap().to_vec(),
                         },
                     )
@@ -956,7 +957,7 @@ impl EmailIngest for Server {
             .with_account_id(account_id)
             .with_collection(Collection::Mailbox)
             .update_document(mailbox_id)
-            .add_and_get(Property::EmailIds, 1);
+            .add_and_get(MailboxField::UidCounter, 1);
         self.core
             .storage
             .data
@@ -975,15 +976,5 @@ impl EmailIngest for Server {
 impl IngestSource<'_> {
     pub fn is_smtp(&self) -> bool {
         matches!(self, Self::Smtp { .. })
-    }
-}
-
-impl From<IngestedEmail> for Object<Value> {
-    fn from(email: IngestedEmail) -> Self {
-        Object::with_capacity(3)
-            .with_property(Property::Id, email.id)
-            .with_property(Property::ThreadId, Id::from(email.id.prefix_id()))
-            .with_property(Property::BlobId, email.blob_id)
-            .with_property(Property::Size, email.size)
     }
 }

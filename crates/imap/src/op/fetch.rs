@@ -32,13 +32,6 @@ use imap_proto::{
     },
     receiver::Request,
 };
-use jmap_proto::types::{
-    acl::Acl,
-    collection::{Collection, SyncCollection, VanishedCollection},
-    id::Id,
-    keyword::Keyword,
-    property::Property,
-};
 use mail_parser::{
     ArchivedAddress, ArchivedHeaderName, ArchivedHeaderValue, core::rkyv::ArchivedGetHeader,
 };
@@ -48,6 +41,13 @@ use store::{
     rkyv::rend::u16_le,
     write::BatchBuilder,
 };
+use types::{
+    acl::Acl,
+    collection::{Collection, SyncCollection, VanishedCollection},
+    field::EmailField,
+    id::Id,
+    keyword::Keyword,
+};
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_fetch(&mut self, requests: Vec<Request<Command>>) -> trc::Result<()> {
@@ -56,7 +56,6 @@ impl<T: SessionStream> Session<T> {
 
         let (data, mailbox) = self.state.select_data();
         let is_qresync = self.is_qresync;
-        let is_rev2 = self.version.is_rev2();
 
         let mut ops = Vec::with_capacity(requests.len());
 
@@ -92,7 +91,6 @@ impl<T: SessionStream> Session<T> {
                                 mailbox.clone(),
                                 is_uid,
                                 is_qresync,
-                                is_rev2,
                                 enabled_condstore,
                                 Instant::now(),
                             )
@@ -117,7 +115,6 @@ impl<T: SessionStream> SessionData<T> {
         mailbox: Arc<SelectedMailbox>,
         is_uid: bool,
         is_qresync: bool,
-        _is_rev2: bool,
         enabled_condstore: bool,
         op_start: Instant,
     ) -> trc::Result<StatusResponse> {
@@ -159,7 +156,7 @@ impl<T: SessionStream> SessionData<T> {
                 .store()
                 .changes(
                     account_id,
-                    SyncCollection::Email,
+                    SyncCollection::Email.into(),
                     Query::from_modseq(changed_since),
                 )
                 .await
@@ -195,7 +192,7 @@ impl<T: SessionStream> SessionData<T> {
                     .store()
                     .vanished::<(u32, u32)>(
                         account_id,
-                        VanishedCollection::Email,
+                        VanishedCollection::Email.into(),
                         Query::from_modseq(changed_since),
                     )
                     .await
@@ -331,7 +328,7 @@ impl<T: SessionStream> SessionData<T> {
                         account_id,
                         Collection::Email,
                         id,
-                        Property::BodyStructure,
+                        EmailField::Metadata.into(),
                     )
                     .await
                     .imap_ctx(&arguments.tag, trc::location!())?,
@@ -543,33 +540,32 @@ impl<T: SessionStream> SessionData<T> {
             self.write_bytes(buf).await?;
 
             // Add to set flags
-            if set_seen_flag {
-                if let Some(data_) = self
+            if set_seen_flag
+                && let Some(data_) = self
                     .server
                     .get_archive(account_id, Collection::Email, id)
                     .await
                     .imap_ctx(&arguments.tag, trc::location!())?
-                {
-                    let data = data_
-                        .to_unarchived::<MessageData>()
-                        .imap_ctx(&arguments.tag, trc::location!())?;
-                    let mut new_data = data
-                        .deserialize()
-                        .imap_ctx(&arguments.tag, trc::location!())?;
-                    new_data.keywords.push(Keyword::Seen);
+            {
+                let data = data_
+                    .to_unarchived::<MessageData>()
+                    .imap_ctx(&arguments.tag, trc::location!())?;
+                let mut new_data = data
+                    .deserialize()
+                    .imap_ctx(&arguments.tag, trc::location!())?;
+                new_data.keywords.push(Keyword::Seen);
 
-                    batch
-                        .with_account_id(account_id)
-                        .with_collection(Collection::Email)
-                        .update_document(id)
-                        .custom(
-                            ObjectIndexBuilder::new()
-                                .with_current(data)
-                                .with_changes(new_data),
-                        )
-                        .imap_ctx(&arguments.tag, trc::location!())?
-                        .commit_point();
-                }
+                batch
+                    .with_account_id(account_id)
+                    .with_collection(Collection::Email)
+                    .update_document(id)
+                    .custom(
+                        ObjectIndexBuilder::new()
+                            .with_current(data)
+                            .with_changes(new_data),
+                    )
+                    .imap_ctx(&arguments.tag, trc::location!())?
+                    .commit_point();
             }
         }
 
@@ -623,7 +619,7 @@ impl<T: SessionStream> SessionData<T> {
 
 #[allow(clippy::result_unit_err)]
 pub trait AsImapDataItem {
-    fn body_structure(&self, decoded: &DecodedParts<'_>, is_extended: bool) -> BodyPart;
+    fn body_structure(&'_ self, decoded: &DecodedParts<'_>, is_extended: bool) -> BodyPart<'_>;
     fn body_section<'x>(
         &self,
         decoded: &'x DecodedParts<'x>,
@@ -642,24 +638,24 @@ pub trait AsImapDataItem {
 #[allow(clippy::result_unit_err)]
 pub trait AsImapDataItemPart {
     fn as_body_part(
-        &self,
+        &'_ self,
         decoded: &DecodedParts<'_>,
         message_id: usize,
         part_id: usize,
         is_extended: bool,
-    ) -> BodyPart;
+    ) -> BodyPart<'_>;
 
-    fn envelope(&self) -> Envelope;
+    fn envelope(&'_ self) -> Envelope<'_>;
 }
 
 impl AsImapDataItemPart for ArchivedMessageMetadataContents {
     fn as_body_part(
-        &self,
+        &'_ self,
         decoded: &DecodedParts<'_>,
         message_id: usize,
         part_id: usize,
         is_extended: bool,
-    ) -> BodyPart {
+    ) -> BodyPart<'_> {
         let part = &self.parts[part_id];
         let body = decoded.raw_message_section_arch(message_id, part.offset_body, part.offset_end);
         let (is_multipart, is_text) = match &part.body {
@@ -803,7 +799,7 @@ impl AsImapDataItemPart for ArchivedMessageMetadataContents {
         }
     }
 
-    fn envelope(&self) -> Envelope {
+    fn envelope(&'_ self) -> Envelope<'_> {
         let headers = self.root_part();
         Envelope {
             date: headers.date(),
@@ -850,7 +846,7 @@ impl AsImapDataItemPart for ArchivedMessageMetadataContents {
 }
 
 impl AsImapDataItem for ArchivedMessageMetadata {
-    fn body_structure(&self, decoded: &DecodedParts<'_>, is_extended: bool) -> BodyPart {
+    fn body_structure(&'_ self, decoded: &DecodedParts<'_>, is_extended: bool) -> BodyPart<'_> {
         let mut stack = Vec::new();
         let base_part = [u16_le::from_native(0)];
         let mut parts = base_part.as_slice().iter();
@@ -944,19 +940,18 @@ impl AsImapDataItem for ArchivedMessageMetadata {
                         None
                     }?;
 
-                    if let ArchivedMetadataPartType::Message(nested_message_id) = &part.body {
-                        if let Some((
+                    if let ArchivedMetadataPartType::Message(nested_message_id) = &part.body
+                        && let Some((
                             _,
                             Section::Part { .. }
                             | Section::Header
                             | Section::HeaderFields { .. }
                             | Section::Text,
                         )) = sections_iter.peek()
-                        {
-                            message = self.message_id(*nested_message_id);
-                            part = message.root_part();
-                            message_id = u16::from(nested_message_id) as usize;
-                        }
+                    {
+                        message = self.message_id(*nested_message_id);
+                        part = message.root_part();
+                        message_id = u16::from(nested_message_id) as usize;
                     }
                 }
                 Section::Header => {
@@ -1211,11 +1206,11 @@ fn get_partial_bytes(bytes: &[u8], partial: Option<(u32, u32)>) -> &[u8] {
 }
 
 trait AsImapAddress {
-    fn as_imap_address(&self) -> Vec<fetch::Address>;
+    fn as_imap_address(&'_ self) -> Vec<fetch::Address<'_>>;
 }
 
 impl AsImapAddress for ArchivedHeaderValue<'_> {
-    fn as_imap_address(&self) -> Vec<fetch::Address> {
+    fn as_imap_address(&'_ self) -> Vec<fetch::Address<'_>> {
         let mut addresses = Vec::new();
 
         match self {

@@ -320,13 +320,13 @@ fn html_to_text(input: &str) -> String {
                     continue;
                 }
                 b'>' if in_tag => {
-                    if tag_token_pos == 1 {
-                        if let Some(tag) = input.get(token_start..token_end + 1) {
-                            if tag.eq_ignore_ascii_case(b"style") {
-                                in_style = !is_tag_close;
-                            } else if tag.eq_ignore_ascii_case(b"script") {
-                                in_script = !is_tag_close;
-                            }
+                    if tag_token_pos == 1
+                        && let Some(tag) = input.get(token_start..token_end + 1)
+                    {
+                        if tag.eq_ignore_ascii_case(b"style") {
+                            in_style = !is_tag_close;
+                        } else if tag.eq_ignore_ascii_case(b"script") {
+                            in_script = !is_tag_close;
                         }
                     }
 

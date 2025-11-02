@@ -57,24 +57,23 @@ impl Server {
     }
 
     pub async fn is_http_anonymous_request_allowed(&self, addr: &IpAddr) -> trc::Result<()> {
-        if let Some(rate) = &self.core.jmap.rate_anonymous {
-            if !self.is_ip_allowed(addr)
-                && self
-                    .core
-                    .storage
-                    .lookup
-                    .is_rate_allowed(
-                        KV_RATE_LIMIT_HTTP_ANONYMOUS,
-                        &ip_to_bytes(addr),
-                        rate,
-                        false,
-                    )
-                    .await
-                    .caused_by(trc::location!())?
-                    .is_some()
-            {
-                return Err(trc::LimitEvent::TooManyRequests.into_err());
-            }
+        if let Some(rate) = &self.core.jmap.rate_anonymous
+            && !self.is_ip_allowed(addr)
+            && self
+                .core
+                .storage
+                .lookup
+                .is_rate_allowed(
+                    KV_RATE_LIMIT_HTTP_ANONYMOUS,
+                    &ip_to_bytes(addr),
+                    rate,
+                    false,
+                )
+                .await
+                .caused_by(trc::location!())?
+                .is_some()
+        {
+            return Err(trc::LimitEvent::TooManyRequests.into_err());
         }
         Ok(())
     }

@@ -48,7 +48,7 @@ relay = true
 [report.tls.aggregate]
 send = "weekly"
 
-[queue.outbound.tls]
+[queue.tls.default]
 dane = "require"
 starttls = "require"
 
@@ -343,10 +343,10 @@ async fn dane_test() {
         certs.remove(0);
         assert_eq!(
             tlsa.verify(0, &host, Some(&certs)),
-            Err(Status::PermanentFailure(Error::DaneError(ErrorDetails {
+            Err(Status::PermanentFailure(ErrorDetails {
                 entity: host,
-                details: "No matching certificates found in TLSA records".into()
-            })))
+                details: Error::DaneError("No matching certificates found in TLSA records".into())
+            }))
         );
     }
 }

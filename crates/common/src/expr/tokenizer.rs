@@ -367,8 +367,14 @@ impl TokenMap {
             V_QUEUE_EXPIRES_IN,
             V_QUEUE_LAST_STATUS,
             V_QUEUE_LAST_ERROR,
+            V_QUEUE_NAME,
+            V_QUEUE_AGE,
             V_ASN,
             V_COUNTRY,
+            V_RECEIVED_FROM_IP,
+            V_RECEIVED_VIA_PORT,
+            V_SOURCE,
+            V_SIZE,
         ])
     }
 

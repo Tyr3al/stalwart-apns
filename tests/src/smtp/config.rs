@@ -474,11 +474,7 @@ async fn eval_dynvalue() {
     ]);
     let core = Server::default();
 
-    for test_name in config
-        .sub_keys("eval", "")
-        .map(|s| s.to_string())
-        .collect::<Vec<_>>()
-    {
+    for test_name in config.sub_keys("eval", "") {
         //println!("============= Testing {:?} ==================", key);
         let if_block = IfBlock::try_parse(
             &mut config,

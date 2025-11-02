@@ -302,6 +302,23 @@ impl Archive<AlignedBytes> {
         })
     }
 
+    pub fn deserialize_untrusted<T>(&self) -> trc::Result<T>
+    where
+        T: rkyv::Archive,
+        T::Archived: for<'a> rkyv::bytecheck::CheckBytes<
+                rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>,
+            > + rkyv::Deserialize<T, rkyv::api::high::HighDeserializer<rkyv::rancor::Error>>,
+    {
+        self.unarchive_untrusted::<T>().and_then(|input| {
+            rkyv::deserialize(input).map_err(|err| {
+                trc::StoreEvent::DeserializeError
+                    .ctx(trc::Key::Value, self.as_bytes())
+                    .caused_by(trc::location!())
+                    .reason(err)
+            })
+        })
+    }
+
     pub fn to_unarchived<T>(&self) -> trc::Result<Archive<&<T as rkyv::Archive>::Archived>>
     where
         T: rkyv::Archive,

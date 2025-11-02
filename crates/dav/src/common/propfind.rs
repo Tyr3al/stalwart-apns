@@ -22,24 +22,25 @@ use crate::{
     },
     common::{DavQueryResource, acl::current_user_privilege_set, uri::DavUriResource},
     file::{FILE_CONTAINER_PROPS, FILE_ITEM_PROPS},
-    principal::{CurrentUserPrincipal, propfind::PrincipalPropFind},
+    principal::{
+        CurrentUserPrincipal,
+        propfind::{PrincipalPropFind, build_home_set},
+    },
 };
-use calcard::common::timezone::Tz;
-use common::{
-    DavResourcePath, DavResources, Server,
-    auth::{AccessToken, AsTenantId},
-};
+use calcard::{common::timezone::Tz, icalendar::ICalendarComponentType};
+use common::{DavResourcePath, DavResources, Server, auth::AccessToken};
 use dav_proto::{
     Depth, RequestHeaders,
     parser::header::dav_base_uri,
+    requests::NsDeadProperty,
     schema::{
         Collation, Namespace,
         property::{
-            ActiveLock, CalDavProperty, CardDavProperty, DavProperty, DavValue, PrincipalProperty,
-            Privilege, ReportSet, ResourceType, Rfc1123DateTime, SupportedCollation, SupportedLock,
-            WebDavProperty,
+            ActiveLock, CalDavProperty, CardDavProperty, Comp, DavProperty, DavValue,
+            PrincipalProperty, Privilege, ReportSet, ResourceType, Rfc1123DateTime,
+            SupportedCollation, SupportedLock, WebDavProperty,
         },
-        request::{DavPropertyValue, DeadProperty, PropFind},
+        request::{DavDeadProperty, DavPropertyValue, PropFind},
         response::{
             AclRestrictions, BaseCondition, Href, List, MultiStatus, PropStat, Response,
             SupportedPrivilege,
@@ -47,16 +48,12 @@ use dav_proto::{
     },
 };
 use directory::{Permission, Type, backend::internal::manage::ManageDirectory};
+use groupware::calendar::{SCHEDULE_INBOX_ID, SupportedComponent};
 use groupware::{
     DavCalendarResource, DavResourceName, cache::GroupwareCache, calendar::ArchivedTimezone,
 };
-use groupware::{RFC_3986, calendar::SCHEDULE_INBOX_ID};
 use http_proto::HttpResponse;
 use hyper::StatusCode;
-use jmap_proto::types::{
-    acl::Acl,
-    collection::{Collection, SyncCollection},
-};
 use std::sync::Arc;
 use store::{
     ahash::AHashMap,
@@ -65,6 +62,12 @@ use store::{
     write::{AlignedBytes, Archive},
 };
 use trc::AddContext;
+use types::{
+    acl::Acl,
+    collection::{Collection, SyncCollection},
+    dead_property::DeadProperty,
+};
+use utils::map::bitmap::Bitmap;
 
 pub(crate) trait PropFindRequestHandler: Sync + Send {
     fn handle_propfind_request(
@@ -132,12 +135,11 @@ impl PropFindRequestHandler for Server {
             Depth::Infinity => match resource.collection {
                 Collection::Principal => true,
                 Collection::Calendar | Collection::AddressBook
-                    if self.core.groupware.assisted_discovery
-                        || (resource.account_id.is_some() && resource.resource.is_some()) =>
+                    if resource.account_id.is_some() && resource.resource.is_some() =>
                 {
                     true
                 }
-                Collection::CalendarScheduling if resource.account_id.is_some() => true,
+                Collection::CalendarEventNotification if resource.account_id.is_some() => true,
                 _ => {
                     return Err(DavErrorCondition::new(
                         StatusCode::FORBIDDEN,
@@ -154,13 +156,13 @@ impl PropFindRequestHandler for Server {
                 Collection::FileNode
                 | Collection::Calendar
                 | Collection::AddressBook
-                | Collection::CalendarScheduling => {
+                | Collection::CalendarEventNotification => {
                     // Validate permissions
                     access_token.assert_has_permission(match resource.collection {
                         Collection::FileNode => Permission::DavFilePropFind,
                         Collection::Calendar
                         | Collection::CalendarEvent
-                        | Collection::CalendarScheduling => Permission::DavCalPropFind,
+                        | Collection::CalendarEventNotification => Permission::DavCalPropFind,
                         Collection::AddressBook | Collection::ContactCard => {
                             Permission::DavCardPropFind
                         }
@@ -190,7 +192,9 @@ impl PropFindRequestHandler for Server {
                             StatusCode::NOT_FOUND,
                         ));
                     } else if access_token.has_account_access(account_id)
-                        || access_token.has_permission(Permission::DavPrincipalList)
+                        || (self.core.groupware.allow_directory_query
+                            && access_token.has_permission(Permission::DavPrincipalList))
+                        || access_token.has_permission(Permission::IndividualList)
                     {
                         self.prepare_principal_propfind_response(
                             access_token,
@@ -212,45 +216,19 @@ impl PropFindRequestHandler for Server {
                 }
                 _ => unreachable!(),
             }
-        } else if (self.core.groupware.assisted_discovery
-            || matches!(headers.depth, Depth::Infinity))
-            && matches!(
-                resource.collection,
-                Collection::Calendar | Collection::AddressBook
-            )
-        {
-            // Assisted collection discovery
-
-            // Validate permissions
-            access_token.assert_has_permission(match resource.collection {
-                Collection::Calendar => Permission::DavCalPropFind,
-                Collection::AddressBook => Permission::DavCardPropFind,
-                _ => unreachable!(),
-            })?;
-
-            self.handle_dav_query(
-                access_token,
-                DavQuery::discovery(
-                    request,
-                    access_token
-                        .all_ids_by_collection(resource.collection)
-                        .collect(),
-                    resource.collection,
-                    headers,
-                ),
-            )
-            .await
         } else {
             let mut response = MultiStatus::new(Vec::with_capacity(16));
 
             // Add container info
             if !headers.depth_no_root {
                 add_base_collection_response(
+                    self,
                     &request,
                     resource.collection,
                     access_token,
                     &mut response,
-                );
+                )
+                .await?;
             }
 
             if return_children {
@@ -260,7 +238,7 @@ impl PropFindRequestHandler for Server {
                         Collection::FileNode => Permission::DavFilePropFind,
                         Collection::Calendar
                         | Collection::CalendarEvent
-                        | Collection::CalendarScheduling => Permission::DavCalPropFind,
+                        | Collection::CalendarEventNotification => Permission::DavCalPropFind,
                         Collection::AddressBook | Collection::ContactCard => {
                             Permission::DavCardPropFind
                         }
@@ -269,7 +247,10 @@ impl PropFindRequestHandler for Server {
                     RoaringBitmap::from_iter(
                         access_token.all_ids_by_collection(resource.collection),
                     )
-                } else if access_token.has_permission(Permission::DavPrincipalList) {
+                } else if (self.core.groupware.allow_directory_query
+                    && access_token.has_permission(Permission::DavPrincipalList))
+                    || access_token.has_permission(Permission::IndividualList)
+                {
                     // Return all principals
                     let principals = self
                         .store()
@@ -319,12 +300,15 @@ impl PropFindRequestHandler for Server {
             self.core.groupware.max_results,
         );
         let mut is_sync_limited = false;
+        let mut is_propfind = false;
+        let mut ical_instances_limit = self.core.groupware.max_ical_instances;
 
         let paths = match std::mem::take(&mut query.resource) {
             DavQueryResource::Uri(resource) => {
                 collection_container = resource.collection;
                 collection_children = collection_container.child_collection().unwrap();
                 sync_collection = SyncCollection::from(collection_container);
+                is_propfind = true;
 
                 get(
                     self,
@@ -373,36 +357,6 @@ impl PropFindRequestHandler for Server {
 
                 items
             }
-            DavQueryResource::Discovery {
-                parent_collection,
-                account_ids,
-            } => {
-                collection_container = parent_collection;
-                collection_children = collection_container.child_collection().unwrap();
-                sync_collection = SyncCollection::from(collection_container);
-
-                // Add container info
-                if !query.depth_no_root {
-                    add_base_collection_response(
-                        &query.propfind,
-                        parent_collection,
-                        access_token,
-                        &mut response,
-                    );
-                }
-
-                discover_root_paths(
-                    self,
-                    access_token,
-                    collection_container,
-                    sync_collection,
-                    &query,
-                    &mut data,
-                    &mut response,
-                    account_ids,
-                )
-                .await?
-            }
             DavQueryResource::None => unreachable!(),
         };
         response.set_namespace(collection_container.namespace());
@@ -414,7 +368,7 @@ impl PropFindRequestHandler for Server {
                     Collection::FileNode => {
                         (FILE_CONTAINER_PROPS.as_slice(), FILE_ITEM_PROPS.as_slice())
                     }
-                    Collection::Calendar | Collection::CalendarScheduling => (
+                    Collection::Calendar | Collection::CalendarEventNotification => (
                         CALENDAR_CONTAINER_PROPS.as_slice(),
                         CALENDAR_ITEM_PROPS.as_slice(),
                     ),
@@ -459,9 +413,8 @@ impl PropFindRequestHandler for Server {
             PropFind::Prop(items) => items.clone(),
         };
 
-        let view_as_id = access_token.primary_id();
-        let is_scheduling = collection_container == Collection::CalendarScheduling;
-        for item in paths {
+        let is_scheduling = collection_container == Collection::CalendarEventNotification;
+        'outer: for item in paths {
             let account_id = item.account_id;
             let document_id = item.document_id;
             let collection = if item.is_container {
@@ -474,7 +427,7 @@ impl PropFindRequestHandler for Server {
             let archive_;
             let archive = if is_scheduling && item.is_container {
                 archive_ = Archive::default();
-                ArchivedResource::CalendarSchedulingCollection(
+                ArchivedResource::CalendarEventNotificationCollection(
                     item.document_id == SCHEDULE_INBOX_ID,
                 )
             } else if let Some(archive) = self
@@ -512,7 +465,7 @@ impl PropFindRequestHandler for Server {
                             data.resources(self, access_token, account_id, SyncCollection::Calendar)
                                 .await
                                 .caused_by(trc::location!())?
-                                .calendar_default_tz(calendar_id)
+                                .calendar_default_tz(calendar_id, account_id)
                                 .unwrap_or(Tz::UTC)
                         } else {
                             Tz::UTC
@@ -542,7 +495,7 @@ impl PropFindRequestHandler for Server {
                             ));
                         }
                         WebDavProperty::DisplayName => {
-                            if let Some(name) = archive.display_name(view_as_id) {
+                            if let Some(name) = archive.display_name(access_token) {
                                 fields.push(DavPropertyValue::new(
                                     property.clone(),
                                     DavValue::String(name.to_string()),
@@ -735,8 +688,10 @@ impl PropFindRequestHandler for Server {
                                     property.clone(),
                                     vec![SupportedPrivilege::all_scheduling_privileges(matches!(
                                         archive,
-                                        ArchivedResource::CalendarScheduling(_)
-                                            | ArchivedResource::CalendarSchedulingCollection(true)
+                                        ArchivedResource::CalendarEventNotification(_)
+                                            | ArchivedResource::CalendarEventNotificationCollection(
+                                                true
+                                            )
                                     ))],
                                 ));
                             }
@@ -746,8 +701,10 @@ impl PropFindRequestHandler for Server {
                                 Privilege::scheduling(
                                     matches!(
                                         archive,
-                                        ArchivedResource::CalendarScheduling(_)
-                                            | ArchivedResource::CalendarSchedulingCollection(true)
+                                        ArchivedResource::CalendarEventNotification(_)
+                                            | ArchivedResource::CalendarEventNotificationCollection(
+                                                true
+                                            )
                                     ),
                                     access_token.is_member(account_id),
                                 )
@@ -828,11 +785,17 @@ impl PropFindRequestHandler for Server {
                         (
                             CardDavProperty::AddressbookDescription,
                             ArchivedResource::AddressBook(book),
-                        ) if book.inner.description.is_some() => {
-                            fields.push(DavPropertyValue::new(
-                                property.clone(),
-                                book.inner.description.as_ref().unwrap().to_string(),
-                            ));
+                        ) => {
+                            if let Some(desc) =
+                                book.inner.preferences(access_token).description.as_deref()
+                            {
+                                fields.push(DavPropertyValue::new(
+                                    property.clone(),
+                                    desc.to_string(),
+                                ));
+                            } else {
+                                fields_not_found.push(DavPropertyValue::empty(property.clone()));
+                            }
                         }
                         (
                             CardDavProperty::SupportedAddressData,
@@ -895,7 +858,7 @@ impl PropFindRequestHandler for Server {
                         ) => {
                             if let Some(desc) = calendar
                                 .inner
-                                .preferences(account_id)
+                                .preferences(access_token)
                                 .description
                                 .as_deref()
                             {
@@ -912,7 +875,7 @@ impl PropFindRequestHandler for Server {
                             ArchivedResource::Calendar(calendar),
                         ) => {
                             if let ArchivedTimezone::Custom(tz) =
-                                &calendar.inner.preferences(account_id).time_zone
+                                &calendar.inner.preferences(access_token).time_zone
                             {
                                 fields.push(DavPropertyValue::new(
                                     property.clone(),
@@ -924,7 +887,7 @@ impl PropFindRequestHandler for Server {
                         }
                         (CalDavProperty::TimezoneId, ArchivedResource::Calendar(calendar)) => {
                             if let ArchivedTimezone::IANA(tz) =
-                                &calendar.inner.preferences(account_id).time_zone
+                                &calendar.inner.preferences(access_token).time_zone
                             {
                                 fields.push(DavPropertyValue::new(
                                     property.clone(),
@@ -936,11 +899,23 @@ impl PropFindRequestHandler for Server {
                         }
                         (
                             CalDavProperty::SupportedCalendarComponentSet,
-                            ArchivedResource::Calendar(_),
+                            ArchivedResource::Calendar(calendar),
                         ) => {
+                            let supported_components =
+                                calendar.inner.supported_components.to_native();
                             fields.push(DavPropertyValue::new(
                                 property.clone(),
-                                DavValue::SupportedCalendarComponentSet,
+                                if supported_components != 0 {
+                                    DavValue::Components(List(
+                                        Bitmap::<SupportedComponent>::from(supported_components)
+                                            .into_iter()
+                                            .map(ICalendarComponentType::from)
+                                            .map(Comp)
+                                            .collect(),
+                                    ))
+                                } else {
+                                    DavValue::all_calendar_components()
+                                },
                             ));
                         }
                         (CalDavProperty::SupportedCalendarData, ArchivedResource::Calendar(_)) => {
@@ -1001,28 +976,35 @@ impl PropFindRequestHandler for Server {
                             CalDavProperty::CalendarData(data),
                             ArchivedResource::CalendarEvent(event),
                         ) => {
-                            let ical = if calendar_filter.is_some() || !data.properties.is_empty() {
-                                calendar_filter
+                            if calendar_filter.is_some() || !data.properties.is_empty() {
+                                if let Some(ical) = calendar_filter
                                     .get_or_insert_with(|| {
                                         CalendarQueryHandler::new(event.inner, None, Tz::UTC)
                                     })
-                                    .serialize_ical(event.inner, data)
+                                    .serialize_ical(event.inner, data, &mut ical_instances_limit)
+                                {
+                                    fields.push(DavPropertyValue::new(
+                                        property.clone(),
+                                        DavValue::CData(ical),
+                                    ));
+                                } else {
+                                    limit = 0;
+                                    break 'outer;
+                                }
                             } else {
-                                event.inner.data.event.to_string()
-                            };
-
-                            fields.push(DavPropertyValue::new(
-                                property.clone(),
-                                DavValue::CData(ical),
-                            ));
+                                fields.push(DavPropertyValue::new(
+                                    property.clone(),
+                                    DavValue::CData(event.inner.data.event.to_string()),
+                                ));
+                            }
                         }
                         (
                             CalDavProperty::CalendarData(_),
-                            ArchivedResource::CalendarScheduling(event),
+                            ArchivedResource::CalendarEventNotification(event),
                         ) => {
                             fields.push(DavPropertyValue::new(
                                 property.clone(),
-                                DavValue::CData(event.inner.itip.to_string()),
+                                DavValue::CData(event.inner.event.to_string()),
                             ));
                         }
                         (CalDavProperty::ScheduleTag, ArchivedResource::CalendarEvent(event))
@@ -1047,7 +1029,7 @@ impl PropFindRequestHandler for Server {
                         }
                         (
                             CalDavProperty::ScheduleDefaultCalendarURL,
-                            ArchivedResource::CalendarSchedulingCollection(true),
+                            ArchivedResource::CalendarEventNotificationCollection(true),
                         ) => {
                             if let Some(default_cal) = &self.core.groupware.default_calendar_name {
                                 fields.push(DavPropertyValue::new(
@@ -1081,12 +1063,11 @@ impl PropFindRequestHandler for Server {
             }
 
             // Add dead properties
-            if skip_not_found {
-                if let Some(dead_properties) =
+            if skip_not_found
+                && let Some(dead_properties) =
                     dead_properties.filter(|dead_properties| !dead_properties.0.is_empty())
-                {
-                    dead_properties.to_dav_values(&mut fields);
-                }
+            {
+                dead_properties.to_dav_values(&mut fields);
             }
 
             // Add response
@@ -1113,17 +1094,29 @@ impl PropFindRequestHandler for Server {
             response.add_response(
                 Response::new_status([query.uri], StatusCode::INSUFFICIENT_STORAGE)
                     .with_error(BaseCondition::NumberOfMatchesWithinLimit)
-                    .with_response_description(format!(
-                        "The number of matches exceeds the limit of {}",
-                        query
-                            .limit
-                            .unwrap_or(self.core.groupware.max_results as u32)
-                    )),
+                    .with_response_description(if ical_instances_limit > 0 {
+                        format!(
+                            "The number of matches exceeds the limit of {}",
+                            query
+                                .limit
+                                .unwrap_or(self.core.groupware.max_results as u32)
+                        )
+                    } else {
+                        format!(
+                            "The number of recurrence instances exceeds the limit of {}",
+                            query
+                                .limit
+                                .unwrap_or(self.core.groupware.max_ical_instances as u32)
+                        )
+                    }),
             );
         }
 
         if !response.response.0.is_empty() || !query.sync_type.is_none() {
             Ok(HttpResponse::new(StatusCode::MULTI_STATUS).with_xml_body(response.to_string()))
+        } else if !is_propfind {
+            Ok(HttpResponse::new(StatusCode::MULTI_STATUS)
+                .with_xml_body(MultiStatus::not_found(query.uri).to_string()))
         } else {
             Ok(HttpResponse::new(StatusCode::NOT_FOUND))
         }
@@ -1170,13 +1163,14 @@ async fn get(
     limit: usize,
     is_sync_limited: &mut bool,
 ) -> crate::Result<Vec<PropFindItem>> {
-    let account_id = resource.account_id;
     let container_has_children = collection_children != collection_container;
+    response.set_namespace(collection_container.namespace());
+
+    let account_id = resource.account_id;
     let resources = data
         .resources(server, access_token, account_id, sync_collection)
         .await
         .caused_by(trc::location!())?;
-    response.set_namespace(collection_container.namespace());
 
     // Obtain document ids
     let mut display_containers = if !access_token.is_member(account_id) {
@@ -1210,11 +1204,11 @@ async fn get(
         });
 
     // Filter by changelog
-    match query.sync_type {
+    let is_sync = match query.sync_type {
         SyncType::From { id, seq } => {
             let changes = server
                 .store()
-                .changes(account_id, sync_collection, Query::Since(id))
+                .changes(account_id, sync_collection.into(), Query::Since(id))
                 .await
                 .caused_by(trc::location!())?;
             let mut vanished: Vec<String> = Vec::new();
@@ -1285,15 +1279,15 @@ async fn get(
                 }
             }
 
-            if maybe_has_vanished {
-                if let Some(vanished_collection) = sync_collection.vanished_collection() {
-                    vanished = server
-                        .store()
-                        .vanished(account_id, vanished_collection, Query::Since(id))
-                        .await
-                        .caused_by(trc::location!())?;
-                    total_changes += vanished.len();
-                }
+            if maybe_has_vanished
+                && let Some(vanished_collection) = sync_collection.vanished_collection()
+            {
+                vanished = server
+                    .store()
+                    .vanished(account_id, vanished_collection.into(), Query::Since(id))
+                    .await
+                    .caused_by(trc::location!())?;
+                total_changes += vanished.len();
             }
 
             // Truncate changes
@@ -1345,15 +1339,19 @@ async fn get(
             if !*is_sync_limited {
                 response.set_sync_token(resources.sync_token());
             }
+
+            true
         }
         SyncType::Initial => {
             response.set_sync_token(resources.sync_token());
+            false
         }
-        SyncType::None => (),
-    }
+        SyncType::None => false,
+    };
 
-    Ok(if let Some(resource) = resource.resource {
-        resources
+    let mut results = Vec::new();
+    if let Some(resource) = resource.resource {
+        results = resources
             .subtree_with_depth(resource, query.depth)
             .filter(|item| {
                 display_containers.as_ref().is_none_or(|containers| {
@@ -1371,7 +1369,7 @@ async fn get(
                 }) && (!query.depth_no_root || item.path() != resource)
             })
             .map(|item| PropFindItem::new(resources.format_resource(item), account_id, item))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
     } else {
         if !query.depth_no_root && query.sync_type.is_none_or_initial() {
             server
@@ -1386,7 +1384,7 @@ async fn get(
         }
 
         if query.depth != 0 {
-            resources
+            results = resources
                 .tree_with_depth(query.depth - 1)
                 .filter(|item| {
                     display_containers.as_ref().is_none_or(|containers| {
@@ -1404,11 +1402,70 @@ async fn get(
                     })
                 })
                 .map(|item| PropFindItem::new(resources.format_resource(item), account_id, item))
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
+                .collect::<Vec<_>>();
+
+            // Assisted discovery:
+            // If 'bob' has access to 'jane' and `bill` calendars, a query to '/dav/cal/bob' will return:
+            //    - /dav/cal/bob/default
+            //    - /dav/cal/jane/default
+            //    - /dav/cal/bill/default
+            // This is invalid but it's the only workaround for clients which do not support multiple home-sets
+            if server.core.groupware.assisted_discovery
+                && !is_sync
+                && account_id == access_token.primary_id()
+                && matches!(
+                    sync_collection,
+                    SyncCollection::Calendar | SyncCollection::AddressBook
+                )
+            {
+                for shared_account_id in access_token.all_ids_by_collection(collection_container) {
+                    if shared_account_id == access_token.primary_id() {
+                        continue;
+                    }
+                    let shared_resources = data
+                        .resources(server, access_token, shared_account_id, sync_collection)
+                        .await
+                        .caused_by(trc::location!())?;
+                    let shared_containers =
+                        (!access_token.is_member(shared_account_id)).then(|| {
+                            shared_resources.shared_containers(
+                                access_token,
+                                [if container_has_children {
+                                    Acl::ReadItems
+                                } else {
+                                    Acl::Read
+                                }],
+                                true,
+                            )
+                        });
+                    if shared_containers
+                        .as_ref()
+                        .is_none_or(|containers| !containers.is_empty())
+                    {
+                        results.extend(
+                            shared_resources
+                                .tree_with_depth(query.depth - 1)
+                                .filter(|item| {
+                                    item.is_container()
+                                        && shared_containers.as_ref().is_none_or(|containers| {
+                                            containers.contains(item.document_id())
+                                        })
+                                })
+                                .map(|item| {
+                                    PropFindItem::new(
+                                        shared_resources.format_resource(item),
+                                        shared_account_id,
+                                        item,
+                                    )
+                                }),
+                        );
+                    }
+                }
+            }
         }
-    })
+    }
+
+    Ok(results)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1472,7 +1529,7 @@ async fn multiget(
             if !resource.is_container() {
                 if document_ids
                     .as_ref()
-                    .is_none_or(|docs| docs.contains(resource.document_id()))
+                    .is_none_or(|docs| docs.contains(resource.parent_id().unwrap()))
                 {
                     paths.push(PropFindItem::new(
                         resources.format_resource(resource),
@@ -1496,58 +1553,6 @@ async fn multiget(
         } else {
             response.add_response(Response::new_status([item], StatusCode::NOT_FOUND));
         }
-    }
-
-    Ok(paths)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn discover_root_paths(
-    server: &Server,
-    access_token: &AccessToken,
-    collection_container: Collection,
-    sync_collection: SyncCollection,
-    query: &DavQuery<'_>,
-    data: &mut PropFindData,
-    response: &mut MultiStatus,
-    account_ids: Vec<u32>,
-) -> crate::Result<Vec<PropFindItem>> {
-    let mut paths = Vec::with_capacity(account_ids.len() * 2);
-
-    for account_id in account_ids {
-        let resources = data
-            .resources(server, access_token, account_id, sync_collection)
-            .await
-            .caused_by(trc::location!())?;
-        server
-            .prepare_principal_propfind_response(
-                access_token,
-                collection_container,
-                [account_id].into_iter(),
-                &query.propfind,
-                response,
-            )
-            .await?;
-
-        // Obtain document ids
-        let display_containers = if !access_token.is_member(account_id) {
-            resources
-                .shared_containers(access_token, [Acl::ReadItems], true)
-                .into()
-        } else {
-            None
-        };
-        paths.extend(
-            resources
-                .tree_with_depth(0)
-                .filter(|item| {
-                    item.is_container()
-                        && display_containers
-                            .as_ref()
-                            .is_none_or(|containers| containers.contains(item.document_id()))
-                })
-                .map(|item| PropFindItem::new(resources.format_resource(item), account_id, item)),
-        );
     }
 
     Ok(paths)
@@ -1678,12 +1683,13 @@ impl SyncTokenUrn for DavResources {
     }
 }
 
-fn add_base_collection_response(
+async fn add_base_collection_response(
+    server: &Server,
     request: &PropFind,
     collection: Collection,
     access_token: &AccessToken,
     response: &mut MultiStatus,
-) {
+) -> trc::Result<()> {
     let properties = match request {
         PropFind::PropName => {
             response.add_response(Response::new_propstat(
@@ -1698,7 +1704,7 @@ fn add_base_collection_response(
                     )),
                 ])],
             ));
-            return;
+            return Ok(());
         }
         PropFind::AllProp(_) => [
             DavProperty::WebDav(WebDavProperty::ResourceType),
@@ -1727,25 +1733,31 @@ fn add_base_collection_response(
                 ));
             }
             DavProperty::Principal(PrincipalProperty::CalendarHomeSet) => {
-                fields.push(DavPropertyValue::new(
-                    prop.clone(),
-                    vec![Href(format!(
-                        "{}/{}/",
-                        DavResourceName::Cal.base_path(),
-                        percent_encoding::utf8_percent_encode(&access_token.name, RFC_3986),
-                    ))],
-                ));
+                let hrefs = build_home_set(
+                    server,
+                    access_token,
+                    &access_token.name,
+                    access_token.primary_id,
+                    true,
+                )
+                .await
+                .caused_by(trc::location!())?;
+
+                fields.push(DavPropertyValue::new(prop.clone(), hrefs));
                 response.set_namespace(Namespace::CalDav);
             }
             DavProperty::Principal(PrincipalProperty::AddressbookHomeSet) => {
-                fields.push(DavPropertyValue::new(
-                    prop.clone(),
-                    vec![Href(format!(
-                        "{}/{}/",
-                        DavResourceName::Card.base_path(),
-                        percent_encoding::utf8_percent_encode(&access_token.name, RFC_3986),
-                    ))],
-                ));
+                let hrefs = build_home_set(
+                    server,
+                    access_token,
+                    &access_token.name,
+                    access_token.primary_id,
+                    false,
+                )
+                .await
+                .caused_by(trc::location!())?;
+
+                fields.push(DavPropertyValue::new(prop.clone(), hrefs));
                 response.set_namespace(Namespace::CardDav);
             }
             DavProperty::WebDav(WebDavProperty::SupportedReportSet) => {
@@ -1779,4 +1791,6 @@ fn add_base_collection_response(
         DavResourceName::from(collection).collection_path(),
         prop_stat,
     ));
+
+    Ok(())
 }

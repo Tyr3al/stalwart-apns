@@ -195,6 +195,7 @@ impl TaskQueueEvent {
             TaskQueueEvent::TaskLocked => "Task is locked by another process",
             TaskQueueEvent::BlobNotFound => "Blob not found for task",
             TaskQueueEvent::MetadataNotFound => "Metadata not found for task",
+            TaskQueueEvent::TaskIgnored => "Task ignored based on current server roles",
         }
     }
 
@@ -204,6 +205,7 @@ impl TaskQueueEvent {
             TaskQueueEvent::TaskLocked => "The task id is locked by another process",
             TaskQueueEvent::BlobNotFound => "The requested blob was not found for task",
             TaskQueueEvent::MetadataNotFound => "The metadata was not found for task",
+            TaskQueueEvent::TaskIgnored => "The task was ignored based on the current server roles",
         }
     }
 }
@@ -396,7 +398,7 @@ impl SmtpEvent {
     pub fn description(&self) -> &'static str {
         match self {
             SmtpEvent::Error => "SMTP error occurred",
-            SmtpEvent::RemoteIdNotFound => "Remote host ID not found",
+            SmtpEvent::IdNotFound => "Strategy not found",
             SmtpEvent::ConcurrencyLimitExceeded => "Concurrency limit exceeded",
             SmtpEvent::TransferLimitExceeded => "Transfer limit exceeded",
             SmtpEvent::RateLimitExceeded => "Rate limit exceeded",
@@ -483,9 +485,7 @@ impl SmtpEvent {
     pub fn explain(&self) -> &'static str {
         match self {
             SmtpEvent::Error => "An error occurred during an SMTP command",
-            SmtpEvent::RemoteIdNotFound => {
-                "The remote server ID was not found in the configuration"
-            }
+            SmtpEvent::IdNotFound => "The strategy ID was not found in the configuration",
             SmtpEvent::ConcurrencyLimitExceeded => "The concurrency limit was exceeded",
             SmtpEvent::TransferLimitExceeded => {
                 "The remote host transferred more data than allowed"
@@ -1723,10 +1723,10 @@ impl LimitEvent {
 impl ManageEvent {
     pub fn description(&self) -> &'static str {
         match self {
-            ManageEvent::MissingParameter => "Missing management parameter",
-            ManageEvent::AlreadyExists => "Managed resource already exists",
-            ManageEvent::AssertFailed => "Management assertion failed",
-            ManageEvent::NotFound => "Managed resource not found",
+            ManageEvent::MissingParameter => "Missing parameter",
+            ManageEvent::AlreadyExists => "Record already exists",
+            ManageEvent::AssertFailed => "Assertion failed",
+            ManageEvent::NotFound => "Resource not found",
             ManageEvent::NotSupported => "Management operation not supported",
             ManageEvent::Error => "Management error",
         }
@@ -1734,8 +1734,8 @@ impl ManageEvent {
 
     pub fn explain(&self) -> &'static str {
         match self {
-            ManageEvent::MissingParameter => "A management parameter is missing",
-            ManageEvent::AlreadyExists => "The managed resource already exists",
+            ManageEvent::MissingParameter => "A parameter is missing",
+            ManageEvent::AlreadyExists => "A record with the same name already exists",
             ManageEvent::AssertFailed => "A management assertion has failed",
             ManageEvent::NotFound => "The managed resource was not found",
             ManageEvent::NotSupported => "The management operation is not supported",

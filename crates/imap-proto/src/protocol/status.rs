@@ -42,9 +42,9 @@ pub enum StatusItemType {
 }
 
 impl StatusItem {
-    pub fn serialize(&self, buf: &mut Vec<u8>, is_rev2: bool) {
+    pub fn serialize(&self, buf: &mut Vec<u8>, is_utf8: bool) {
         buf.extend_from_slice(b"* STATUS ");
-        if is_rev2 {
+        if is_utf8 {
             quoted_string(buf, &self.mailbox_name);
         } else {
             quoted_string(buf, &utf7_encode(&self.mailbox_name));
@@ -102,9 +102,7 @@ mod tests {
 
         assert_eq!(
             String::from_utf8(buf).unwrap(),
-            concat!(
-                "* STATUS \"blurdybloop\" (MESSAGES 231 UIDNEXT 44292 MAILBOXID (abc-123))\r\n",
-            )
+            "* STATUS \"blurdybloop\" (MESSAGES 231 UIDNEXT 44292 MAILBOXID (abc-123))\r\n"
         );
     }
 }

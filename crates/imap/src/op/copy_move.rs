@@ -4,38 +4,37 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::ImapContext;
 use crate::{
     core::{MailboxId, SelectedMailbox, Session, SessionData},
     spawn_op,
 };
-use common::{listener::SessionStream, storage::index::ObjectIndexBuilder};
+use common::{ipc::PushNotification, listener::SessionStream, storage::index::ObjectIndexBuilder};
 use directory::Permission;
 use email::{
-    mailbox::{JUNK_ID, UidMailbox},
+    cache::{MessageCacheFetch, email::MessageCacheAccess},
+    mailbox::{JUNK_ID, TRASH_ID, UidMailbox},
     message::{
-        bayes::EmailBayesTrain, copy::EmailCopy, ingest::EmailIngest, metadata::MessageData,
+        bayes::EmailBayesTrain,
+        copy::{CopyMessageError, EmailCopy},
+        ingest::EmailIngest,
+        metadata::MessageData,
     },
 };
 use imap_proto::{
     Command, ResponseCode, ResponseType, StatusResponse, protocol::copy_move::Arguments,
     receiver::Request,
 };
-use jmap_proto::{
-    error::set::SetErrorType,
-    types::{
-        acl::Acl,
-        collection::{Collection, VanishedCollection},
-        state::StateChange,
-        type_state::DataType,
-    },
-};
 use std::{sync::Arc, time::Instant};
 use store::{
     roaring::RoaringBitmap,
     write::{AlignedBytes, Archive, BatchBuilder, ValueClass},
 };
-
-use super::ImapContext;
+use types::{
+    acl::Acl,
+    collection::{Collection, VanishedCollection},
+    type_state::{DataType, StateChange},
+};
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_copy_move(
@@ -52,7 +51,7 @@ impl<T: SessionStream> Session<T> {
         })?;
 
         let op_start = Instant::now();
-        let arguments = request.parse_copy_move(self.version)?;
+        let arguments = request.parse_copy_move(self.is_utf8)?;
         let (data, src_mailbox) = self.state.mailbox_state();
         let is_qresync = self.is_qresync;
 
@@ -122,10 +121,32 @@ impl<T: SessionStream> SessionData<T> {
             .imap_ctx(&arguments.tag, trc::location!())?;
 
         if ids.is_empty() {
-            return Err(trc::ImapEvent::Error
-                .into_err()
-                .details("No messages were found.")
-                .id(arguments.tag));
+            trc::event!(
+                Imap(if is_move {
+                    trc::ImapEvent::Move
+                } else {
+                    trc::ImapEvent::Copy
+                }),
+                SpanId = self.session_id,
+                Source = src_mailbox.id.account_id,
+                Details = trc::Value::None,
+                Uid = trc::Value::None,
+                AccountId = dest_mailbox.account_id,
+                MailboxId = dest_mailbox.mailbox_id,
+                Elapsed = op_start.elapsed()
+            );
+
+            return self
+                .write_bytes(
+                    StatusResponse::ok(if is_move {
+                        "No messages were moved."
+                    } else {
+                        "No messages were copied."
+                    })
+                    .with_tag(arguments.tag)
+                    .into_bytes(),
+                )
+                .await;
         }
 
         // Verify that the user can delete messages from the source mailbox.
@@ -305,7 +326,9 @@ impl<T: SessionStream> SessionData<T> {
                             vec![],
                         );
                         has_spam_train_tasks = true;
-                    } else if src_mailbox.id.mailbox_id == JUNK_ID {
+                    } else if src_mailbox.id.mailbox_id == JUNK_ID
+                        && dest_mailbox_id.mailbox_id != TRASH_ID
+                    {
                         batch.set(
                             ValueClass::TaskQueue(
                                 self.server
@@ -343,6 +366,11 @@ impl<T: SessionStream> SessionData<T> {
             let dest_account_id = dest_mailbox.account_id;
             let resource_token = access_token.as_resource_token();
             let mut destroy_ids = RoaringBitmap::new();
+            let cache = self
+                .server
+                .get_cached_messages(src_account_id)
+                .await
+                .imap_ctx(&arguments.tag, trc::location!())?;
             for (id, imap_id) in ids {
                 match self
                     .server
@@ -351,7 +379,10 @@ impl<T: SessionStream> SessionData<T> {
                         id,
                         &resource_token,
                         vec![dest_mailbox_id],
-                        Vec::new(),
+                        cache
+                            .email_by_id(&id)
+                            .map(|e| cache.expand_keywords(e).collect())
+                            .unwrap_or_default(),
                         None,
                         self.session_id,
                     )
@@ -366,12 +397,13 @@ impl<T: SessionStream> SessionData<T> {
                         }
                     }
                     Err(err) => {
-                        if err.type_ != SetErrorType::NotFound {
-                            response.rtype = ResponseType::No;
-                            response.code = Some(err.type_.into());
-                            if let Some(message) = err.description {
-                                response.message = message;
+                        match err {
+                            CopyMessageError::OverQuota => {
+                                response.rtype = ResponseType::No;
+                                response.code = Some(ResponseCode::OverQuota);
+                                response.message = "Mailbox quota exceeded".into();
                             }
+                            CopyMessageError::NotFound => (),
                         }
                         continue;
                     }
@@ -405,31 +437,52 @@ impl<T: SessionStream> SessionData<T> {
             // Broadcast changes on destination account
             if let Some(change_id) = dest_change_id {
                 self.server
-                    .broadcast_state_change(
-                        StateChange::new(dest_account_id, change_id)
+                    .broadcast_push_notification(PushNotification::StateChange(
+                        StateChange::new(dest_account_id)
+                            .with_change_id(change_id)
                             .with_change(DataType::Email)
                             .with_change(DataType::Thread)
                             .with_change(DataType::Mailbox),
-                    )
+                    ))
                     .await;
             }
         }
 
         // Map copied JMAP Ids to IMAP UIDs in the destination folder.
         if copied_ids.is_empty() {
-            return Err(if response.rtype != ResponseType::Ok {
-                trc::ImapEvent::Error
+            return if response.rtype != ResponseType::Ok {
+                Err(trc::ImapEvent::Error
                     .into_err()
                     .details(response.message)
                     .ctx_opt(trc::Key::Code, response.code)
+                    .id(arguments.tag))
             } else {
-                trc::ImapEvent::Error.into_err().details(if is_move {
-                    "No messages were moved."
-                } else {
-                    "No messages were copied."
-                })
-            }
-            .id(arguments.tag));
+                trc::event!(
+                    Imap(if is_move {
+                        trc::ImapEvent::Move
+                    } else {
+                        trc::ImapEvent::Copy
+                    }),
+                    SpanId = self.session_id,
+                    Source = src_mailbox.id.account_id,
+                    Details = trc::Value::None,
+                    Uid = trc::Value::None,
+                    AccountId = dest_mailbox.account_id,
+                    MailboxId = dest_mailbox.mailbox_id,
+                    Elapsed = op_start.elapsed()
+                );
+
+                self.write_bytes(
+                    StatusResponse::ok(if is_move {
+                        "No messages were moved."
+                    } else {
+                        "No messages were copied."
+                    })
+                    .with_tag(arguments.tag)
+                    .into_bytes(),
+                )
+                .await
+            };
         }
 
         // Prepare response

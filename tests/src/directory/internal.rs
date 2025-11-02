@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use crate::directory::{DirectoryTest, IntoTestPrincipal, TestPrincipal};
 use ahash::AHashSet;
 use directory::{
-    Permission, QueryBy, Type,
+    Permission, QueryBy, QueryParams, Type,
     backend::{
         RcptType,
         internal::{
@@ -16,15 +17,13 @@ use directory::{
         },
     },
 };
-use jmap_proto::types::collection::Collection;
 use mail_send::Credentials;
 use store::{
     BitmapKey, Store, ValueKey,
     roaring::RoaringBitmap,
     write::{BatchBuilder, BitmapClass, ValueClass},
 };
-
-use crate::directory::{DirectoryTest, IntoTestPrincipal, TestPrincipal};
+use types::collection::Collection;
 
 #[tokio::test]
 async fn internal_directory() {
@@ -48,7 +47,7 @@ async fn internal_directory() {
                 TestPrincipal {
                     name: "john".into(),
                     description: Some("John Doe".into()),
-                    secrets: vec!["secret".into(), "secret2".into()],
+                    secrets: vec!["secret".into(), "$app$secret2".into()],
                     ..Default::default()
                 }
                 .into(),
@@ -149,7 +148,7 @@ async fn internal_directory() {
                 TestPrincipal {
                     name: "jane".into(),
                     description: Some("Jane Doe".into()),
-                    secrets: vec!["my_secret".into(), "my_secret2".into()],
+                    secrets: vec!["my_secret".into(), "$app$my_secret2".into()],
                     emails: vec!["jane@example.org".into()],
                     quota: 123,
                     ..Default::default()
@@ -178,8 +177,8 @@ async fn internal_directory() {
         assert_eq!(
             store
                 .query(
-                    QueryBy::Credentials(&Credentials::new("jane".into(), "my_secret".into())),
-                    true
+                    QueryParams::credentials(&Credentials::new("jane".into(), "my_secret".into()))
+                        .with_return_member_of(true)
                 )
                 .await
                 .unwrap()
@@ -189,7 +188,7 @@ async fn internal_directory() {
                 name: "jane".into(),
                 description: Some("Jane Doe".into()),
                 emails: vec!["jane@example.org".into()],
-                secrets: vec!["my_secret".into(), "my_secret2".into()],
+                secrets: vec!["my_secret".into(), "$app$my_secret2".into()],
                 quota: 123,
                 ..Default::default()
             })
@@ -197,8 +196,11 @@ async fn internal_directory() {
         assert_eq!(
             store
                 .query(
-                    QueryBy::Credentials(&Credentials::new("jane".into(), "wrong_password".into())),
-                    true
+                    QueryParams::credentials(&Credentials::new(
+                        "jane".into(),
+                        "wrong_password".into()
+                    ))
+                    .with_return_member_of(true)
                 )
                 .await
                 .unwrap(),
@@ -275,7 +277,7 @@ async fn internal_directory() {
 
         assert_eq!(
             store
-                .query(QueryBy::Name("list"), true)
+                .query(QueryParams::name("list").with_return_member_of(true))
                 .await
                 .unwrap()
                 .unwrap()
@@ -353,7 +355,7 @@ async fn internal_directory() {
                 .is_ok()
         );
         let principal = store
-            .query(QueryBy::Name("john"), true)
+            .query(QueryParams::name("john").with_return_member_of(true))
             .await
             .unwrap()
             .unwrap();
@@ -364,7 +366,7 @@ async fn internal_directory() {
                 id: john_id,
                 name: "john".into(),
                 description: Some("John Doe".into()),
-                secrets: vec!["secret".into(), "secret2".into()],
+                secrets: vec!["secret".into(), "$app$secret2".into()],
                 emails: vec!["john@example.org".into()],
                 member_of: vec!["sales".into(), "support".into()],
                 lists: vec!["list".into()],
@@ -398,7 +400,7 @@ async fn internal_directory() {
                 .is_ok()
         );
         let principal = store
-            .query(QueryBy::Name("john"), true)
+            .query(QueryParams::name("john").with_return_member_of(true))
             .await
             .unwrap()
             .unwrap();
@@ -409,7 +411,7 @@ async fn internal_directory() {
                 id: john_id,
                 name: "john".into(),
                 description: Some("John Doe".into()),
-                secrets: vec!["secret".into(), "secret2".into()],
+                secrets: vec!["secret".into(), "$app$secret2".into()],
                 emails: vec!["john@example.org".into()],
                 member_of: vec!["sales".into()],
                 lists: vec!["list".into()],
@@ -448,7 +450,7 @@ async fn internal_directory() {
         );
 
         let principal = store
-            .query(QueryBy::Name("john.doe"), true)
+            .query(QueryParams::name("john.doe").with_return_member_of(true))
             .await
             .unwrap()
             .unwrap();
@@ -775,6 +777,11 @@ pub trait TestInternalDirectory {
     async fn create_test_list(&self, login: &str, name: &str, emails: &[&str]) -> u32;
     async fn set_test_quota(&self, login: &str, quota: u32);
     async fn add_permissions(&self, login: &str, permissions: impl IntoIterator<Item = Permission>);
+    async fn remove_permissions(
+        &self,
+        login: &str,
+        permissions: impl IntoIterator<Item = Permission>,
+    );
     async fn add_to_group(&self, login: &str, group: &str) -> ChangedPrincipals;
     async fn remove_from_group(&self, login: &str, group: &str) -> ChangedPrincipals;
     async fn remove_test_alias(&self, login: &str, alias: &str);
@@ -791,7 +798,11 @@ impl TestInternalDirectory for Store {
     ) -> u32 {
         let role = if login == "admin" { "admin" } else { "user" };
         self.create_test_domains(emails).await;
-        if let Some(principal) = self.query(QueryBy::Name(login), false).await.unwrap() {
+        if let Some(principal) = self
+            .query(QueryParams::name(login).with_return_member_of(false))
+            .await
+            .unwrap()
+        {
             self.update_principal(UpdatePrincipal::by_id(principal.id()).with_updates(vec![
                 PrincipalUpdate::set(
                     PrincipalField::Secrets,
@@ -808,6 +819,10 @@ impl TestInternalDirectory for Store {
                 PrincipalUpdate::add_item(
                     PrincipalField::Roles,
                     PrincipalValue::String(role.into()),
+                ),
+                PrincipalUpdate::add_item(
+                    PrincipalField::EnabledPermissions,
+                    PrincipalValue::String(Permission::UnlimitedRequests.name().into()),
                 ),
             ]))
             .await
@@ -829,6 +844,12 @@ impl TestInternalDirectory for Store {
                     .with_field(
                         PrincipalField::Roles,
                         PrincipalValue::StringList(vec![role.into()]),
+                    )
+                    .with_field(
+                        PrincipalField::EnabledPermissions,
+                        PrincipalValue::StringList(vec![
+                            Permission::UnlimitedRequests.name().into(),
+                        ]),
                     ),
                 None,
                 None,
@@ -841,7 +862,11 @@ impl TestInternalDirectory for Store {
 
     async fn create_test_group(&self, login: &str, name: &str, emails: &[&str]) -> u32 {
         self.create_test_domains(emails).await;
-        if let Some(principal) = self.query(QueryBy::Name(login), false).await.unwrap() {
+        if let Some(principal) = self
+            .query(QueryParams::name(login).with_return_member_of(false))
+            .await
+            .unwrap()
+        {
             principal.id()
         } else {
             self.create_principal(
@@ -866,7 +891,11 @@ impl TestInternalDirectory for Store {
     }
 
     async fn create_test_list(&self, login: &str, name: &str, members: &[&str]) -> u32 {
-        if let Some(principal) = self.query(QueryBy::Name(login), false).await.unwrap() {
+        if let Some(principal) = self
+            .query(QueryParams::name(login).with_return_member_of(false))
+            .await
+            .unwrap()
+        {
             principal.id()
         } else {
             self.create_test_domains(&[login]).await;
@@ -921,6 +950,28 @@ impl TestInternalDirectory for Store {
         .unwrap();
     }
 
+    async fn remove_permissions(
+        &self,
+        login: &str,
+        permissions: impl IntoIterator<Item = Permission>,
+    ) {
+        self.update_principal(
+            UpdatePrincipal::by_name(login).with_updates(
+                permissions
+                    .into_iter()
+                    .map(|p| {
+                        PrincipalUpdate::remove_item(
+                            PrincipalField::EnabledPermissions,
+                            PrincipalValue::String(p.name().to_string()),
+                        )
+                    })
+                    .collect(),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+
     async fn add_to_group(&self, login: &str, group: &str) -> ChangedPrincipals {
         self.update_principal(UpdatePrincipal::by_name(login).with_updates(vec![
             PrincipalUpdate::add_item(
@@ -958,7 +1009,7 @@ impl TestInternalDirectory for Store {
         for domain in domains {
             let domain = domain.rsplit_once('@').map_or(*domain, |(_, d)| d);
             if self
-                .query(QueryBy::Name(domain), false)
+                .query(QueryParams::name(domain).with_return_member_of(false))
                 .await
                 .unwrap()
                 .is_none()

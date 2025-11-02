@@ -20,24 +20,20 @@ pub struct PrincipalInfo {
     pub tenant: Option<u32>,
 }
 
-#[cfg(feature = "enterprise")]
 impl PrincipalInfo {
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
-
+    #[cfg(feature = "enterprise")]
     pub fn has_tenant_access(&self, tenant_id: Option<u32>) -> bool {
         tenant_id.is_none_or(|tenant_id| {
             self.tenant.is_some_and(|t| tenant_id == t)
                 || (self.typ == Type::Tenant && self.id == tenant_id)
         })
     }
-
     // SPDX-SnippetEnd
-}
 
-#[cfg(not(feature = "enterprise"))]
-impl PrincipalInfo {
+    #[cfg(not(feature = "enterprise"))]
     pub fn has_tenant_access(&self, _tenant_id: Option<u32>) -> bool {
         true
     }
@@ -276,24 +272,19 @@ impl PrincipalField {
 }
 
 pub trait SpecialSecrets {
-    fn is_otp_auth(&self) -> bool;
-    fn is_app_password(&self) -> bool;
-    fn is_password(&self) -> bool;
+    fn is_otp_secret(&self) -> bool;
+    fn is_app_secret(&self) -> bool;
 }
 
 impl<T> SpecialSecrets for T
 where
     T: AsRef<str>,
 {
-    fn is_otp_auth(&self) -> bool {
+    fn is_otp_secret(&self) -> bool {
         self.as_ref().starts_with("otpauth://")
     }
 
-    fn is_app_password(&self) -> bool {
+    fn is_app_secret(&self) -> bool {
         self.as_ref().starts_with("$app$")
-    }
-
-    fn is_password(&self) -> bool {
-        !self.is_otp_auth() && !self.is_app_password()
     }
 }

@@ -4,18 +4,15 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::fmt::Write;
-
 use common::{Server, manager::webadmin::Resource};
-
-use directory::QueryBy;
+use directory::QueryParams;
+use http_proto::*;
 use quick_xml::Reader;
 use quick_xml::events::Event;
+use std::fmt::Write;
+use std::future::Future;
 use trc::AddContext;
 use utils::url_params::UrlParams;
-
-use http_proto::*;
-use std::future::Future;
 
 pub trait Autoconfig: Sync + Send {
     fn handle_autoconfig_request(
@@ -79,6 +76,25 @@ impl Autoconfig for Server {
         }
 
         config.push_str("\t</emailProvider>\n");
+
+        for (tag, protocol, url) in [
+            ("addressBook", "carddav", "card"),
+            ("calendar", "caldav", "cal"),
+            ("fileShare", "webdav", "file"),
+        ] {
+            let _ = writeln!(&mut config, "\t<{tag} type=\"{protocol}\">");
+            let _ = writeln!(&mut config, "\t\t<username>{account_name}</username>");
+            let _ = writeln!(
+                &mut config,
+                "\t\t<authentication>http-basic</authentication>"
+            );
+            let _ = writeln!(
+                &mut config,
+                "\t\t<serverURL>https://{server_name}/dav/{url}</serverURL>"
+            );
+            let _ = writeln!(&mut config, "\t</{tag}>");
+        }
+
         let _ = writeln!(
             &mut config,
             "\t<clientConfigUpdate url=\"https://autoconfig.{domain}/mail/config-v1.1.xml\"></clientConfigUpdate>"
@@ -206,22 +222,17 @@ impl Autoconfig for Server {
             .email_to_id(emailaddress)
             .await
             .caused_by(trc::location!())?
-        {
-            if let Ok(Some(principal)) = self
+            && let Ok(Some(principal)) = self
                 .core
                 .storage
                 .directory
-                .query(QueryBy::Id(id), false)
+                .query(QueryParams::id(id).with_return_member_of(false))
                 .await
-            {
-                if principal
-                    .emails
-                    .first()
-                    .is_some_and(|email| email.eq_ignore_ascii_case(emailaddress))
-                {
-                    account_name = principal.name;
-                }
-            }
+            && principal
+                .primary_email()
+                .is_some_and(|email| email.eq_ignore_ascii_case(emailaddress))
+        {
+            account_name = principal.name;
         }
 
         Ok((account_name, self.core.network.server_name.clone(), domain))
@@ -299,12 +310,11 @@ fn parse_autodiscover_request(bytes: &[u8]) -> Result<String, String> {
         }
     }
 
-    if let Ok(Event::Text(text)) = reader.read_event_into(&mut buf) {
-        if let Ok(text) = text.unescape() {
-            if text.contains('@') {
-                return Ok(text.trim().to_lowercase());
-            }
-        }
+    if let Ok(Event::Text(text)) = reader.read_event_into(&mut buf)
+        && let Ok(text) = text.xml_content()
+        && text.contains('@')
+    {
+        return Ok(text.trim().to_lowercase());
     }
 
     Err(format!(

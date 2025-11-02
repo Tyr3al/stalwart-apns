@@ -105,7 +105,7 @@ mod tests {
                 .serialize()
             )
             .unwrap(),
-            concat!("* VANISHED 3:5\r\n")
+            "* VANISHED 3:5\r\n"
         );
     }
 }

@@ -4,6 +4,15 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::assert_is_unique_uid;
+use crate::{
+    DavError, DavMethod,
+    common::{
+        lock::{LockRequestHandler, ResourceState},
+        uri::DavUriResource,
+    },
+    file::DavFileResource,
+};
 use calcard::common::timezone::Tz;
 use common::{DavName, Server, auth::AccessToken};
 use dav_proto::{Depth, RequestHeaders};
@@ -14,23 +23,12 @@ use groupware::{
 };
 use http_proto::HttpResponse;
 use hyper::StatusCode;
-use jmap_proto::types::{
+use store::write::{BatchBuilder, now};
+use trc::AddContext;
+use types::{
     acl::Acl,
     collection::{Collection, SyncCollection, VanishedCollection},
 };
-use store::write::{BatchBuilder, now};
-use trc::AddContext;
-
-use crate::{
-    DavError, DavMethod,
-    common::{
-        lock::{LockRequestHandler, ResourceState},
-        uri::DavUriResource,
-    },
-    file::DavFileResource,
-};
-
-use super::assert_is_unique_uid;
 
 pub(crate) trait CalendarCopyMoveRequestHandler: Sync + Send {
     fn handle_calendar_copy_move_request(
@@ -806,12 +804,12 @@ async fn copy_container(
 
     let preference = calendar.preferences.into_iter().next().unwrap();
     calendar.name = new_name.to_string();
-    calendar.default_alerts.clear();
     calendar.acls.clear();
     calendar.preferences = vec![CalendarPreferences {
         account_id: to_account_id,
         name: preference.name,
         description: preference.description,
+        default_alerts: preference.default_alerts,
         sort_order: 0,
         color: preference.color,
         flags: 0,

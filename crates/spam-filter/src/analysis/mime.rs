@@ -366,15 +366,15 @@ impl SpamFilterAnalyzeMime for Server {
             if is_attachment {
                 // Has a MIME attachment
                 ctx.result.add_tag("HAS_ATTACHMENT");
-                if ct_full != "application/octet-stream" {
-                    if let Some(t) = infer::get(part.contents()) {
-                        if t.mime_type() == ct_full {
-                            // Known content-type
-                            ctx.result.add_tag("MIME_GOOD");
-                        } else {
-                            // Known bad content-type
-                            ctx.result.add_tag("MIME_BAD");
-                        }
+                if ct_full != "application/octet-stream"
+                    && let Some(t) = infer::get(part.contents())
+                {
+                    if t.mime_type() == ct_full {
+                        // Known content-type
+                        ctx.result.add_tag("MIME_GOOD");
+                    } else {
+                        // Known bad content-type
+                        ctx.result.add_tag("MIME_BAD");
                     }
                 }
             }

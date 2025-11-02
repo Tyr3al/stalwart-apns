@@ -22,14 +22,15 @@ use dav_proto::{
     schema::{
         property::CardDavPropertyName,
         request::{AddressbookQuery, Filter, FilterOp, VCardPropertyWithGroup},
+        response::MultiStatus,
     },
 };
 use groupware::cache::GroupwareCache;
 use http_proto::HttpResponse;
 use hyper::StatusCode;
-use jmap_proto::types::{acl::Acl, collection::SyncCollection};
 use std::fmt::Write;
 use trc::AddContext;
+use types::{acl::Acl, collection::SyncCollection};
 
 pub(crate) trait CardQueryRequestHandler: Sync + Send {
     fn handle_card_query_request(
@@ -57,13 +58,14 @@ impl CardQueryRequestHandler for Server {
             .fetch_dav_resources(access_token, account_id, SyncCollection::AddressBook)
             .await
             .caused_by(trc::location!())?;
-        let resource = resources
-            .by_path(
-                resource_
-                    .resource
-                    .ok_or(DavError::Code(StatusCode::METHOD_NOT_ALLOWED))?,
-            )
-            .ok_or(DavError::Code(StatusCode::NOT_FOUND))?;
+        let Some(resource) = resources.by_path(
+            resource_
+                .resource
+                .ok_or(DavError::Code(StatusCode::METHOD_NOT_ALLOWED))?,
+        ) else {
+            return Ok(HttpResponse::new(StatusCode::MULTI_STATUS)
+                .with_xml_body(MultiStatus::not_found(headers.uri).to_string()));
+        };
         if !resource.is_container() {
             return Err(DavError::Code(StatusCode::METHOD_NOT_ALLOWED));
         }
@@ -122,11 +124,11 @@ pub(crate) fn vcard_query(card: &ArchivedVCard, filters: &AddressbookFilter) -> 
                             let mut matched_any = false;
 
                             for value in entry.values.iter() {
-                                if let Some(text) = value.as_text() {
-                                    if text_match.matches(text) {
-                                        matched_any = true;
-                                        break;
-                                    }
+                                if let Some(text) = value.as_text()
+                                    && text_match.matches(text)
+                                {
+                                    matched_any = true;
+                                    break;
                                 }
                             }
 
@@ -155,7 +157,7 @@ pub(crate) fn vcard_query(card: &ArchivedVCard, filters: &AddressbookFilter) -> 
                         FilterOp::Exists => true,
                         FilterOp::Undefined => false,
                         FilterOp::TextMatch(text_match) => {
-                            if let Some(text) = entry.as_text() {
+                            if let Some(text) = entry.value.as_text() {
                                 text_match.matches(text)
                             } else {
                                 false
@@ -195,7 +197,7 @@ fn find_parameter<'x>(
     entry: &'x ArchivedVCardEntry,
     name: &VCardParameterName,
 ) -> Option<&'x ArchivedVCardParameter> {
-    entry.params.iter().find(|param| param.matches_name(name))
+    entry.params.iter().find(|param| param.name == *name)
 }
 
 pub(crate) fn serialize_vcard_with_props(

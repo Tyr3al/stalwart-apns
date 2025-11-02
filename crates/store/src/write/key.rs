@@ -5,7 +5,8 @@
  */
 
 use std::convert::TryInto;
-use utils::{BLOB_HASH_LEN, codec::leb128::Leb128_};
+use types::{blob_hash::BLOB_HASH_LEN, collection::SyncCollection};
+use utils::codec::leb128::Leb128_;
 
 use crate::{
     BitmapKey, Deserialize, IndexKey, IndexKeyPrefix, Key, LogKey, SUBSPACE_ACL,
@@ -301,10 +302,11 @@ impl ValueClass {
                     due,
                     event_id,
                     alarm_id,
+                    is_email_alert,
                 } => serializer
                     .write(*due)
                     .write(account_id)
-                    .write(3u8)
+                    .write(if *is_email_alert { 3u8 } else { 6u8 })
                     .write(document_id)
                     .write(*event_id)
                     .write(*alarm_id),
@@ -374,9 +376,10 @@ impl ValueClass {
             },
             ValueClass::Queue(queue) => match queue {
                 QueueClass::Message(queue_id) => serializer.write(*queue_id),
-                QueueClass::MessageEvent(event) => {
-                    serializer.write(event.due).write(event.queue_id)
-                }
+                QueueClass::MessageEvent(event) => serializer
+                    .write(event.due)
+                    .write(event.queue_id)
+                    .write(event.queue_name.as_slice()),
                 QueueClass::DmarcReportHeader(event) => serializer
                     .write(0u8)
                     .write(event.due)
@@ -433,6 +436,13 @@ impl ValueClass {
             },
             ValueClass::DocumentId => serializer.write(account_id).write(collection),
             ValueClass::ChangeId => serializer.write(account_id),
+            ValueClass::ShareNotification {
+                notification_id,
+                notify_account_id,
+            } => serializer
+                .write(*notify_account_id)
+                .write(u8::from(SyncCollection::ShareNotification))
+                .write(*notification_id),
             ValueClass::Any(any) => serializer.write(any.key.as_slice()),
         }
         .finalize()
@@ -607,7 +617,7 @@ impl ValueClass {
             },
             ValueClass::Queue(q) => match q {
                 QueueClass::Message(_) => U64_LEN,
-                QueueClass::MessageEvent(_) => U64_LEN * 2,
+                QueueClass::MessageEvent(_) => U64_LEN * 3,
                 QueueClass::DmarcReportEvent(event) | QueueClass::TlsReportEvent(event) => {
                     event.domain.len() + U64_LEN * 3
                 }
@@ -624,6 +634,7 @@ impl ValueClass {
             },
             ValueClass::DocumentId => U32_LEN + 1,
             ValueClass::ChangeId => U32_LEN,
+            ValueClass::ShareNotification { .. } => U32_LEN + U64_LEN + 1,
             ValueClass::Any(v) => v.key.len(),
         }
     }
@@ -671,6 +682,7 @@ impl ValueClass {
                 TelemetryClass::Metric { .. } => SUBSPACE_TELEMETRY_METRIC,
             },
             ValueClass::DocumentId | ValueClass::ChangeId => SUBSPACE_COUNTER,
+            ValueClass::ShareNotification { .. } => SUBSPACE_LOGS,
             ValueClass::Any(any) => any.subspace,
         }
     }

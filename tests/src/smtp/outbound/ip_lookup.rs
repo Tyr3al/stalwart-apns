@@ -15,8 +15,8 @@ const LOCAL: &str = r#"
 [session.rcpt]
 relay = true
 
-[queue.outbound]
-ip-strategy = "ipv6_then_ipv4"
+[queue.route.mx]
+ip-lookup = "ipv6_then_ipv4"
 "#;
 
 const REMOTE: &str = r#"
@@ -81,7 +81,7 @@ async fn ip_lookup_strategy() {
             remote.queue_receiver.expect_message().await;
         } else {
             let message = local.queue_receiver.last_queued_message().await;
-            let status = message.domains[0].status.to_string();
+            let status = message.message.recipients[0].status.to_string();
             assert!(
                 status.contains("Connection refused"),
                 "Message: {:?}",

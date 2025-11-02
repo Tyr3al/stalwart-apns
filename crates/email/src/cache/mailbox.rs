@@ -7,11 +7,15 @@
 use crate::mailbox::{ArchivedMailbox, Mailbox, manage::MailboxFnc};
 use common::{
     MailboxCache, MailboxesCache, MessageStoreCache, Server, auth::AccessToken,
-    config::jmap::settings::SpecialUse, sharing::EffectiveAcl,
+    sharing::EffectiveAcl,
 };
-use jmap_proto::types::{acl::Acl, collection::Collection, value::AclGrant};
 use store::{ahash::AHashMap, roaring::RoaringBitmap};
 use trc::AddContext;
+use types::{
+    acl::{Acl, AclGrant},
+    collection::Collection,
+    special_use::SpecialUse,
+};
 use utils::{map::bitmap::Bitmap, topological::TopologicalSort};
 
 pub(crate) async fn update_mailbox_cache(
@@ -28,18 +32,17 @@ pub(crate) async fn update_mailbox_cache(
     };
 
     for (document_id, is_update) in changed_ids {
-        if *is_update {
-            if let Some(archive) = server
+        if *is_update
+            && let Some(archive) = server
                 .get_archive(account_id, Collection::Mailbox, *document_id)
                 .await
                 .caused_by(trc::location!())?
-            {
-                insert_item(
-                    &mut new_cache,
-                    *document_id,
-                    archive.unarchive::<Mailbox>()?,
-                );
-            }
+        {
+            insert_item(
+                &mut new_cache,
+                *document_id,
+                archive.unarchive::<Mailbox>()?,
+            );
         }
     }
 

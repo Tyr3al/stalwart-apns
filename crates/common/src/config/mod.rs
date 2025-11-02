@@ -188,19 +188,24 @@ impl Core {
             )
         }
 
+        let groupware = GroupwareConfig::parse(config);
         Self {
+            // SPDX-SnippetBegin
+            // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+            // SPDX-License-Identifier: LicenseRef-SEL
             #[cfg(feature = "enterprise")]
             enterprise,
+            // SPDX-SnippetEnd
             sieve: Scripting::parse(config, &stores).await,
             network: Network::parse(config),
             smtp: SmtpConfig::parse(config).await,
-            jmap: JmapConfig::parse(config),
+            jmap: JmapConfig::parse(config, &groupware),
             imap: ImapConfig::parse(config),
             oauth: OAuthConfig::parse(config),
             acme: AcmeProviders::parse(config),
             metrics: Metrics::parse(config),
             spam: SpamFilterConfig::parse(config).await,
-            groupware: GroupwareConfig::parse(config),
+            groupware,
             storage: Storage {
                 data,
                 blob,

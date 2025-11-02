@@ -13,9 +13,9 @@ use store::write::now;
 use crate::smtp::{DnsCache, TestSMTP, session::TestSession};
 
 const LOCAL: &str = r#"
-[queue.outbound]
-next-hop = [{if = "retry_num > 0", then = "'fallback'"},
-            {else = false}]
+[queue.strategy]
+route = [{if = "retry_num > 0", then = "'fallback'"},
+            {else = "'mx'"}]
 
 [session.rcpt]
 relay = true
@@ -24,13 +24,14 @@ max-recipients = 100
 [session.extensions]
 dsn = true
 
-[remote.fallback]
+[queue.route.fallback]
+type = "relay"
 address = fallback.foobar.org
 port = 9925
 protocol = 'smtp'
 concurrency = 5
 
-[remote.fallback.tls]
+[queue.route.fallback.tls]
 implicit = false
 allow-invalid-certs = true
 
@@ -93,13 +94,11 @@ async fn fallback_relay() {
         .await
         .try_deliver(core.clone());
     let mut retry = local.queue_receiver.expect_message().await;
-    let prev_due = retry.domains[0].retry.due;
+    let prev_due = retry.message.recipients[0].retry.due;
     let next_due = now();
     let queue_id = retry.queue_id;
-    retry.domains[0].retry.due = next_due;
-    retry
-        .save_changes(&core, prev_due.into(), next_due.into())
-        .await;
+    retry.message.recipients[0].retry.due = next_due;
+    retry.save_changes(&core, prev_due.into()).await;
     local
         .queue_receiver
         .delivery_attempt(queue_id)

@@ -4,25 +4,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::BitmapHash;
 use crate::backend::MAX_TOKEN_LENGTH;
-
-use super::{BitmapClass, BitmapHash};
-
-impl BitmapClass {
-    pub fn word(token: impl AsRef<[u8]>, field: impl Into<u8>) -> Self {
-        BitmapClass::Text {
-            field: field.into(),
-            token: BitmapHash::new(token),
-        }
-    }
-
-    pub fn stemmed(token: impl AsRef<[u8]>, field: impl Into<u8>) -> Self {
-        BitmapClass::Text {
-            field: field.into() | (1 << 7),
-            token: BitmapHash::new(token),
-        }
-    }
-}
 
 impl BitmapHash {
     pub fn new(item: impl AsRef<[u8]>) -> Self {

@@ -96,14 +96,15 @@ impl SpamFilterAnalyzeUrl for Server {
             for token in tokens {
                 match token {
                     TokenType::Url(url) | TokenType::UrlNoScheme(url) => {
-                        if is_body && !ctx.result.has_tag("RCPT_DOMAIN_IN_BODY") {
-                            if let Some(url_parsed) = &url.url_parsed {
-                                let host = url_parsed.host.sld_or_default();
-                                for rcpt in ctx.output.all_recipients() {
-                                    if rcpt.email.domain_part.sld_or_default() == host {
-                                        ctx.result.add_tag("RCPT_DOMAIN_IN_BODY");
-                                        break;
-                                    }
+                        if is_body
+                            && !ctx.result.has_tag("RCPT_DOMAIN_IN_BODY")
+                            && let Some(url_parsed) = &url.url_parsed
+                        {
+                            let host = url_parsed.host.sld_or_default();
+                            for rcpt in ctx.output.all_recipients() {
+                                if rcpt.email.domain_part.sld_or_default() == host {
+                                    ctx.result.add_tag("RCPT_DOMAIN_IN_BODY");
+                                    break;
                                 }
                             }
                         }

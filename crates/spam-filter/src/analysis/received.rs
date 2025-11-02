@@ -48,22 +48,20 @@ impl SpamFilterAnalyzeReceived for Server {
                         ctx.result.add_tag("RCVD_HELO_USER");
                     } else if let (Some(Host::Name(helo_domain)), Some(ip_rev)) =
                         (helo_domain, ip_rev)
+                        && helo_domain.to_lowercase() != ip_rev.to_lowercase()
                     {
-                        if helo_domain.to_lowercase() != ip_rev.to_lowercase() {
-                            // HELO domain does not match PTR record
-                            ctx.result.add_tag("FORGED_RCVD_TRAIL");
-                        }
+                        // HELO domain does not match PTR record
+                        ctx.result.add_tag("FORGED_RCVD_TRAIL");
                     }
 
-                    if let Some(delivered_for) = received.for_().map(|s| s.to_lowercase()) {
-                        if ctx
+                    if let Some(delivered_for) = received.for_().map(|s| s.to_lowercase())
+                        && ctx
                             .output
                             .all_recipients()
                             .any(|r| r.email.address == delivered_for)
-                        {
-                            // Recipient appears on Received trail
-                            ctx.result.add_tag("PREVIOUSLY_DELIVERED");
-                        }
+                    {
+                        // Recipient appears on Received trail
+                        ctx.result.add_tag("PREVIOUSLY_DELIVERED");
                     }
 
                     if matches!(received.from, Some(Host::IpAddr(_))) {

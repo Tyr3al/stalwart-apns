@@ -88,11 +88,12 @@ impl<'x> Iterator for TypesTokenizer<'x> {
         }
 
         // Try parsing currencies and floating point numbers
-        if self.tokenize_numbers && !last_is_dot {
-            if let Some(num) = self.try_parse_number() {
-                self.peek_advance();
-                return Some(num);
-            }
+        if self.tokenize_numbers
+            && !last_is_dot
+            && let Some(num) = self.try_parse_number()
+        {
+            self.peek_advance();
+            return Some(num);
         }
 
         self.peek_rewind();

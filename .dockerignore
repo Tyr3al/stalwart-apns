@@ -4,10 +4,7 @@
 // Allow what is needed
 !crates
 !tests
-!resources/docker/entrypoint.sh
-!resources/locales/**
-!resources/html-templates/**
-!resources/systemd/**
+!resources
 
 !Cargo.lock
 !Cargo.toml

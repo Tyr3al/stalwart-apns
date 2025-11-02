@@ -4,17 +4,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use aes_gcm::{
-    Aes128Gcm, Nonce,
-    aead::{Aead, generic_array::GenericArray},
-};
+use aes_gcm::{Aes128Gcm, Nonce, aead::Aead};
 use hkdf::Hkdf;
 use p256::{
     PublicKey,
     ecdh::EphemeralSecret,
     elliptic_curve::{rand_core::OsRng, sec1::ToEncodedPoint},
 };
-use sha2::Sha256;
+use sha2::{Sha256, digest::generic_array::GenericArray};
 use store::rand::Rng;
 
 /*
@@ -83,7 +80,7 @@ pub fn ece_encrypt(
     // Split into records
     let rs = ECE_WEBPUSH_DEFAULT_RS as usize - ECE_TAG_LENGTH;
     let mut min_num_records = data.len() / (rs - 1);
-    if data.len() % (rs - 1) != 0 {
+    if !data.len().is_multiple_of(rs - 1) {
         min_num_records += 1;
     }
     let mut pad_length = std::cmp::max(pad_length, min_num_records);
@@ -123,7 +120,7 @@ pub fn ece_encrypt(
             data_share = data.len();
         } else if extra_data > 0 {
             let mut extra_share = extra_data / (records_remaining - 1);
-            if extra_data % (records_remaining - 1) != 0 {
+            if !extra_data.is_multiple_of(records_remaining - 1) {
                 extra_share += 1;
             }
             data_share += extra_share;

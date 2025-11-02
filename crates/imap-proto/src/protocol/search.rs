@@ -235,8 +235,8 @@ mod tests {
                     highest_modseq: None,
                 },
                 "A283",
-                concat!("* ESEARCH (TAG \"A283\") COUNT 3 MIN 2 MAX 11 ALL 2,10:11\r\n",),
-                concat!("* SEARCH 2 10 11\r\n"),
+                "* ESEARCH (TAG \"A283\") COUNT 3 MIN 2 MAX 11 ALL 2,10:11\r\n",
+                "* SEARCH 2 10 11\r\n",
             ),
             (
                 super::Response {
@@ -252,8 +252,8 @@ mod tests {
                     highest_modseq: None,
                 },
                 "A283",
-                concat!("* ESEARCH (TAG \"A283\") ALL 1:3,5,10:13,90,92:99\r\n",),
-                concat!("* SEARCH 1 2 3 5 10 11 12 13 90 92 93 94 95 96 97 98 99\r\n",),
+                "* ESEARCH (TAG \"A283\") ALL 1:3,5,10:13,90,92:99\r\n",
+                "* SEARCH 1 2 3 5 10 11 12 13 90 92 93 94 95 96 97 98 99\r\n",
             ),
             (
                 super::Response {
@@ -267,8 +267,8 @@ mod tests {
                     highest_modseq: None,
                 },
                 "A283",
-                concat!("* ESEARCH (TAG \"A283\")\r\n",),
-                concat!("* SEARCH\r\n"),
+                "* ESEARCH (TAG \"A283\")\r\n",
+                "* SEARCH\r\n",
             ),
             (
                 super::Response {
@@ -282,8 +282,8 @@ mod tests {
                     highest_modseq: 12345.into(),
                 },
                 "A283",
-                concat!("* ESEARCH (TAG \"A283\") ALL 10:13,21 MODSEQ 12345\r\n",),
-                concat!("* SEARCH 10 11 12 13 21 (MODSEQ 12345)\r\n",),
+                "* ESEARCH (TAG \"A283\") ALL 10:13,21 MODSEQ 12345\r\n",
+                "* SEARCH 10 11 12 13 21 (MODSEQ 12345)\r\n",
             ),
         ] {
             let response_v2 = String::from_utf8(response.clone().serialize(tag)).unwrap();

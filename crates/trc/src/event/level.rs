@@ -162,7 +162,7 @@ impl EventType {
                 | SmtpEvent::UnsupportedParameter
                 | SmtpEvent::SyntaxError
                 | SmtpEvent::Error => Level::Debug,
-                SmtpEvent::MissingLocalHostname | SmtpEvent::RemoteIdNotFound => Level::Warn,
+                SmtpEvent::MissingLocalHostname | SmtpEvent::IdNotFound => Level::Warn,
                 SmtpEvent::ConcurrencyLimitExceeded
                 | SmtpEvent::TransferLimitExceeded
                 | SmtpEvent::RateLimitExceeded
@@ -380,6 +380,7 @@ impl EventType {
                 TaskQueueEvent::BlobNotFound
                 | TaskQueueEvent::TaskAcquired
                 | TaskQueueEvent::TaskLocked
+                | TaskQueueEvent::TaskIgnored
                 | TaskQueueEvent::MetadataNotFound => Level::Debug,
             },
             EventType::Dmarc(_) => Level::Debug,

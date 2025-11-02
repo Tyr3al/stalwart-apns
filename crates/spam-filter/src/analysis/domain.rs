@@ -41,13 +41,13 @@ impl SpamFilterAnalyzeDomain for Server {
 
         // Add DKIM domains
         for dkim in ctx.input.dkim_result {
-            if dkim.result() == &DkimResult::Pass {
-                if let Some(domain) = dkim.signature().map(|s| &s.d) {
-                    domains.insert(ElementLocation::new(
-                        CompactString::from_str_to_lowercase(domain),
-                        Location::HeaderDkimPass,
-                    ));
-                }
+            if dkim.result() == &DkimResult::Pass
+                && let Some(domain) = dkim.signature().map(|s| &s.d)
+            {
+                domains.insert(ElementLocation::new(
+                    CompactString::from_str_to_lowercase(domain),
+                    Location::HeaderDkimPass,
+                ));
             }
         }
 
@@ -59,11 +59,10 @@ impl SpamFilterAnalyzeDomain for Server {
                         .into_iter()
                         .flatten()
                     {
-                        if let Host::Name(name) = host {
-                            if let Some(name) = Hostname::new(name.as_ref()).sld {
-                                domains
-                                    .insert(ElementLocation::new(name, Location::HeaderReceived));
-                            }
+                        if let Host::Name(name) = host
+                            && let Some(name) = Hostname::new(name.as_ref()).sld
+                        {
+                            domains.insert(ElementLocation::new(name, Location::HeaderReceived));
                         }
                     }
                 }

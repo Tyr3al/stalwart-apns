@@ -4,28 +4,27 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::ETag;
+use super::uri::{DavUriResource, OwnedUri, UriResource, Urn};
+use crate::{DavError, DavErrorCondition, DavMethod};
 use common::KV_LOCK_DAV;
 use common::{Server, auth::AccessToken};
 use dav_proto::schema::property::{ActiveLock, LockScope, WebDavProperty};
-use dav_proto::schema::request::{DavPropertyValue, DeadProperty};
+use dav_proto::schema::request::DavPropertyValue;
 use dav_proto::schema::response::{BaseCondition, List, PropResponse};
 use dav_proto::{Condition, Depth, Timeout};
 use dav_proto::{RequestHeaders, schema::request::LockInfo};
-
 use groupware::cache::GroupwareCache;
 use http_proto::HttpResponse;
 use hyper::StatusCode;
-use jmap_proto::types::collection::Collection;
 use std::collections::HashMap;
 use store::dispatch::lookup::KeyValue;
 use store::write::serialize::rkyv_deserialize;
 use store::write::{AlignedBytes, Archive, Archiver, now};
 use store::{Serialize, U32_LEN};
 use trc::AddContext;
-
-use super::ETag;
-use super::uri::{DavUriResource, OwnedUri, UriResource, Urn};
-use crate::{DavError, DavErrorCondition, DavMethod};
+use types::collection::Collection;
+use types::dead_property::DeadProperty;
 
 #[derive(Debug, Default, Clone)]
 pub struct ResourceState<'x> {
@@ -526,8 +525,7 @@ impl LockRequestHandler for Server {
 
                     if let Some(document_id) =
                         resource_state.document_id.filter(|&id| id != u32::MAX)
-                    {
-                        if let Some(archive) = self
+                        && let Some(archive) = self
                             .get_archive(
                                 resource_state.account_id,
                                 resource_state.collection,
@@ -535,22 +533,22 @@ impl LockRequestHandler for Server {
                             )
                             .await
                             .caused_by(trc::location!())?
-                        {
-                            resource_state.etag = archive.etag().into();
-                        }
+                    {
+                        resource_state.etag = archive.etag().into();
                     }
                 }
 
                 // Fetch lock token
-                if needs_lock_token && resource_state.lock_tokens.is_empty() {
-                    if let Some(idx) = locks.find_cache_pos(self, resource_state).await? {
-                        let found_locks = locks
-                            .find_locks_by_pos(idx, resource_state, false)?
-                            .iter()
-                            .map(|(_, lock)| lock.urn().to_string())
-                            .collect::<Vec<_>>();
-                        resource_state.lock_tokens = found_locks;
-                    }
+                if needs_lock_token
+                    && resource_state.lock_tokens.is_empty()
+                    && let Some(idx) = locks.find_cache_pos(self, resource_state).await?
+                {
+                    let found_locks = locks
+                        .find_locks_by_pos(idx, resource_state, false)?
+                        .iter()
+                        .map(|(_, lock)| lock.urn().to_string())
+                        .collect::<Vec<_>>();
+                    resource_state.lock_tokens = found_locks;
                 }
 
                 // Fetch sync token

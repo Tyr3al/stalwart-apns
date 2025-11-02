@@ -30,7 +30,7 @@ use store::{
     write::{BatchBuilder, BlobOp, now},
 };
 use trc::AddContext;
-use utils::BlobHash;
+use types::blob_hash::BlobHash;
 use x509_parser::nom::AsBytes;
 
 pub trait FormHandler: Sync + Send {
@@ -50,24 +50,23 @@ impl FormHandler for Server {
         form_data: FormData,
     ) -> trc::Result<HttpResponse> {
         // Validate rate
-        if let Some(rate) = &form.rate {
-            if !session.remote_ip.is_loopback()
-                && self
-                    .core
-                    .storage
-                    .lookup
-                    .is_rate_allowed(
-                        KV_RATE_LIMIT_CONTACT,
-                        &ip_to_bytes(&session.remote_ip),
-                        rate,
-                        false,
-                    )
-                    .await
-                    .caused_by(trc::location!())?
-                    .is_some()
-            {
-                return Err(trc::LimitEvent::TooManyRequests.into_err());
-            }
+        if let Some(rate) = &form.rate
+            && !session.remote_ip.is_loopback()
+            && self
+                .core
+                .storage
+                .lookup
+                .is_rate_allowed(
+                    KV_RATE_LIMIT_CONTACT,
+                    &ip_to_bytes(&session.remote_ip),
+                    rate,
+                    false,
+                )
+                .await
+                .caused_by(trc::location!())?
+                .is_some()
+        {
+            return Err(trc::LimitEvent::TooManyRequests.into_err());
         }
 
         // Validate honeypot

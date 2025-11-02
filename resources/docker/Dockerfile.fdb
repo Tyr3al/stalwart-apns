@@ -2,7 +2,7 @@
 ARG TARGETPLATFORM
 
 # --- Chef Stage ---
-FROM debian:bookworm-slim AS chef
+FROM debian:trixie-slim AS chef
 # Re-declare TARGETPLATFORM for use in this stage
 ARG TARGETPLATFORM
 RUN apt-get update && \
@@ -12,7 +12,8 @@ RUN apt-get update && \
     cmake \
     clang \
     curl \
-    protobuf-compiler
+    protobuf-compiler \
+    adduser
 ENV RUSTUP_HOME=/opt/rust/rustup \
     PATH=/home/root/.cargo/bin:/opt/rust/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN curl https://sh.rustup.rs -sSf | \
@@ -43,8 +44,7 @@ COPY resources/ resources/
 COPY tests/ tests/
 RUN cargo chef prepare --recipe-path recipe.json
 
-# --- Builder Stage ---
-FROM chef AS builder
+FROM chef AS builder 
 COPY --from=planner /app/recipe.json recipe.json
 COPY resources/ resources/
 RUN cargo chef cook --release --recipe-path recipe.json
@@ -52,8 +52,9 @@ COPY Cargo.toml .
 COPY Cargo.lock .
 COPY crates/ crates/
 COPY tests/ tests/
-RUN cargo build --manifest-path=crates/main/Cargo.toml --no-default-features --features "foundationdb,nats,enterprise" --release
+RUN cargo build -p stalwart --no-default-features --features "foundationdb elastic s3 redis nats enterprise" --release
 
+FROM debian:trixie-slim AS runtime
 
 # --- Runtime Stage ---
 FROM debian:bookworm-slim AS runtime

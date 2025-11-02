@@ -19,27 +19,27 @@ use imap_proto::{
     protocol::status::{Status, StatusItem, StatusItemType},
     receiver::Request,
 };
-use jmap_proto::types::{collection::Collection, id::Id, keyword::Keyword, property::Property};
 use std::time::Instant;
 use store::{Deserialize, U32_LEN};
 use store::{
     IndexKeyPrefix, IterateParams, roaring::RoaringBitmap, write::key::DeserializeBigEndian,
 };
 use trc::AddContext;
+use types::{collection::Collection, field::EmailField, id::Id, keyword::Keyword};
 
 impl<T: SessionStream> Session<T> {
     pub async fn handle_status(&mut self, requests: Vec<Request<Command>>) -> trc::Result<()> {
         // Validate access
         self.assert_has_permission(Permission::ImapStatus)?;
 
-        let version = self.version;
+        let is_utf8 = self.is_utf8;
         let data = self.state.session_data();
 
         spawn_op!(data, {
             let mut did_sync = false;
 
             for request in requests.into_iter() {
-                match request.parse_status(version) {
+                match request.parse_status(is_utf8) {
                     Ok(arguments) => {
                         let op_start = Instant::now();
                         if !did_sync {
@@ -69,7 +69,7 @@ impl<T: SessionStream> Session<T> {
                         );
 
                         let mut buf = Vec::with_capacity(32);
-                        status.serialize(&mut buf, version.is_rev2());
+                        status.serialize(&mut buf, is_utf8);
                         data.write_bytes(
                             StatusResponse::completed(Command::Status)
                                 .with_tag(arguments.tag)
@@ -302,12 +302,12 @@ impl<T: SessionStream> SessionData<T> {
                     IndexKeyPrefix {
                         account_id,
                         collection: Collection::Email.into(),
-                        field: Property::Size.into(),
+                        field: EmailField::Size.into(),
                     },
                     IndexKeyPrefix {
                         account_id,
                         collection: Collection::Email.into(),
-                        field: u8::from(Property::Size) + 1,
+                        field: u8::from(EmailField::Size) + 1,
                     },
                 )
                 .ascending()

@@ -21,6 +21,7 @@ impl<T: SessionStream> Session<T> {
                 true,
                 self.is_qresync,
                 self.version.is_rev2(),
+                self.is_utf8,
             )
             .await?;
         }

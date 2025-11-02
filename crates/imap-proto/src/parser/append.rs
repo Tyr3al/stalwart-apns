@@ -9,7 +9,7 @@ use compact_str::ToCompactString;
 use crate::{
     Command,
     protocol::{
-        Flag, ProtocolVersion,
+        Flag,
         append::{self, Message},
     },
     receiver::{Request, Token, bad},
@@ -26,7 +26,7 @@ enum State {
 }
 
 impl Request<Command> {
-    pub fn parse_append(self, version: ProtocolVersion) -> trc::Result<append::Arguments> {
+    pub fn parse_append(self, is_utf8: bool) -> trc::Result<append::Arguments> {
         match self.tokens.len() {
             0 | 1 => Err(self.into_error("Missing arguments.")),
             _ => {
@@ -38,7 +38,7 @@ impl Request<Command> {
                         .unwrap()
                         .unwrap_string()
                         .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                    version,
+                    is_utf8,
                 );
                 let mut messages = Vec::new();
 
@@ -154,7 +154,7 @@ mod tests {
 
     use crate::{
         protocol::{
-            Flag, ProtocolVersion,
+            Flag,
             append::{self, Message},
         },
         receiver::{Error, Receiver},
@@ -254,7 +254,7 @@ mod tests {
                 receiver
                     .parse(&mut command.as_bytes().iter())
                     .expect(command)
-                    .parse_append(ProtocolVersion::Rev1)
+                    .parse_append(false)
                     .expect(command),
                 arguments,
                 "{:?}",
@@ -287,7 +287,7 @@ mod tests {
             match receiver.parse(&mut line.as_bytes().iter()) {
                 Ok(request) => {
                     assert_eq!(
-                        request.parse_append(ProtocolVersion::Rev1).unwrap(),
+                        request.parse_append(false).unwrap(),
                         append::Arguments {
                             tag: "A003".into(),
                             mailbox_name: "saved-messages".into(),

@@ -168,7 +168,7 @@ impl AddressMapping {
 struct Address<'x>(&'x str);
 
 impl ResolveVariable for Address<'_> {
-    fn resolve_variable(&self, _: u32) -> crate::expr::Variable {
+    fn resolve_variable(&'_ self, _: u32) -> crate::expr::Variable<'_> {
         Variable::from(self.0)
     }
 
@@ -186,10 +186,10 @@ impl AddressMapping {
     ) -> Cow<'x, str> {
         match self {
             AddressMapping::Enable => {
-                if let Some((local_part, domain_part)) = address.rsplit_once('@') {
-                    if let Some((local_part, _)) = local_part.split_once('+') {
-                        return format!("{}@{}", local_part, domain_part).into();
-                    }
+                if let Some((local_part, domain_part)) = address.rsplit_once('@')
+                    && let Some((local_part, _)) = local_part.split_once('+')
+                {
+                    return format!("{}@{}", local_part, domain_part).into();
                 }
             }
             AddressMapping::Custom(if_block) => {

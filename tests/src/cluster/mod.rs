@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
-
+use crate::{
+    AssertConfig, TEST_USERS, add_test_certs,
+    directory::internal::TestInternalDirectory,
+    imap::{ImapConnection, Type},
+    jmap::server::enterprise::EnterpriseCore,
+};
+use ahash::AHashMap;
 use common::{
     Caches, Core, Data, Inner, Server,
     config::{
@@ -26,16 +31,10 @@ use managesieve::core::ManageSieveSessionManager;
 use pop3::Pop3SessionManager;
 use services::{SpawnServices, broadcast::subscriber::spawn_broadcast_subscriber};
 use smtp::{SpawnQueueManager, core::SmtpSessionManager};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use store::Stores;
 use tokio::sync::watch;
 use utils::config::Config;
-
-use crate::{
-    AssertConfig, TEST_USERS, add_test_certs,
-    directory::internal::TestInternalDirectory,
-    imap::{ImapConnection, Type},
-    jmap::enterprise::EnterpriseCore,
-};
 
 pub mod broadcast;
 pub mod stress;
@@ -52,6 +51,7 @@ pub async fn cluster_tests() {
 #[allow(dead_code)]
 pub struct ClusterTest {
     servers: Vec<Server>,
+    account_ids: AHashMap<String, u32>,
     shutdown_txs: Vec<watch::Sender<bool>>,
 }
 
@@ -107,15 +107,18 @@ async fn init_cluster_tests(delete_if_exists: bool) -> ClusterTest {
     }
 
     // Create test users
+    let mut account_ids = AHashMap::new();
     for (account, secret, name, email) in TEST_USERS {
-        let _account_id = store
+        let account_id = store
             .create_test_user(account, secret, name, &[email])
             .await;
+        account_ids.insert(account.to_string(), account_id);
     }
 
     ClusterTest {
         servers,
         shutdown_txs,
+        account_ids,
     }
 }
 
@@ -141,6 +144,13 @@ impl ClusterTest {
         self.servers
             .get(node_id)
             .unwrap_or_else(|| panic!("No server found for node ID: {}", node_id))
+    }
+
+    pub fn account_id(&self, login: &str) -> u32 {
+        self.account_ids
+            .get(login)
+            .cloned()
+            .unwrap_or_else(|| panic!("No account ID found for login: {}", login))
     }
 }
 
@@ -176,7 +186,7 @@ async fn build_server(mut config: Config, stores: Stores) -> (Server, watch::Sen
         .enable_enterprise();
     let data = Data::parse(&mut config);
     let cache = Caches::parse(&mut config);
-    let (ipc, mut ipc_rxs) = build_ipc(&mut config, true);
+    let (ipc, mut ipc_rxs) = build_ipc(true);
     let inner = Arc::new(Inner {
         shared_core: core.into_shared(),
         data,
@@ -246,6 +256,7 @@ url = "'https://127.0.0.1:800{NODE_ID}'"
 
 [cluster]
 node-id = {NODE_ID}
+coordinator = "{PUBSUB}"
 
 [server.listener.http]
 bind = ["127.0.0.1:1800{NODE_ID}"]
@@ -290,10 +301,9 @@ directory = "'{STORE}'"
 [resolver]
 type = "system"
 
-[queue.outbound]
-next-hop = [ { if = "rcpt_domain == 'example.com'", then = "'local'" }, 
-             { if = "contains(['remote.org', 'foobar.com', 'test.com', 'other_domain.com'], rcpt_domain)", then = "'mock-smtp'" },
-             { else = false } ]
+[queue.strategy]
+route = [ { if = "rcpt_domain == 'example.com'", then = "'local'" }, 
+             { else = "'mx'" } ]
 
 [store."foundationdb"]
 type = "foundationdb"
@@ -324,7 +334,6 @@ fts = "{STORE}"
 blob = "{STORE}"
 lookup = "{STORE}"
 directory = "{STORE}"
-pubsub = "{PUBSUB}"
 
 [directory."{STORE}"]
 type = "internal"

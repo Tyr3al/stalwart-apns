@@ -28,11 +28,7 @@ impl MemoryDirectory {
             domains: Default::default(),
         };
 
-        for lookup_id in config
-            .sub_keys((prefix.as_str(), "principals"), ".name")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for lookup_id in config.sub_keys((prefix.as_str(), "principals"), ".name") {
             let lookup_id = lookup_id.as_str();
             let name = config
                 .value_require((prefix.as_str(), "principals", lookup_id, "name"))?
@@ -63,14 +59,11 @@ impl MemoryDirectory {
 
             // Create principal
             let mut principal = Principal::new(id, typ);
-            let mut member_of = Vec::with_capacity(2);
-            principal
-                .data
-                .push(PrincipalData::Roles(vec![if is_superuser {
-                    ROLE_ADMIN
-                } else {
-                    ROLE_USER
-                }]));
+            principal.data.push(PrincipalData::Role(if is_superuser {
+                ROLE_ADMIN
+            } else {
+                ROLE_USER
+            }));
 
             // Obtain group ids
             for group in config
@@ -78,7 +71,7 @@ impl MemoryDirectory {
                 .map(|(_, s)| s.to_string())
                 .collect::<Vec<_>>()
             {
-                member_of.push(
+                principal.data.push(PrincipalData::MemberOf(
                     directory
                         .data_store
                         .get_or_create_principal_id(&group, Type::Group)
@@ -93,9 +86,8 @@ impl MemoryDirectory {
                             )
                         })
                         .ok()?,
-                );
+                ));
             }
-            principal.data.push(PrincipalData::MemberOf(member_of));
 
             // Parse email addresses
             for (pos, (_, email)) in config
@@ -116,7 +108,15 @@ impl MemoryDirectory {
                     directory.domains.insert(domain.to_lowercase());
                 }
 
-                principal.emails.push(email.to_lowercase());
+                if pos == 0 {
+                    principal
+                        .data
+                        .push(PrincipalData::PrimaryEmail(email.to_lowercase()));
+                } else {
+                    principal
+                        .data
+                        .push(PrincipalData::EmailAlias(email.to_lowercase()));
+                }
             }
 
             // Parse mailing lists
@@ -135,17 +135,19 @@ impl MemoryDirectory {
 
             principal.name = name.as_str().into();
             for (_, secret) in config.values((prefix.as_str(), "principals", lookup_id, "secret")) {
-                principal.secrets.push(secret.into());
+                principal.data.push(PrincipalData::Password(secret.into()));
             }
             if let Some(description) =
                 config.value((prefix.as_str(), "principals", lookup_id, "description"))
             {
-                principal.description = Some(description.into());
+                principal
+                    .data
+                    .push(PrincipalData::Description(description.into()));
             }
             if let Some(quota) =
                 config.property::<u64>((prefix.as_str(), "principals", lookup_id, "quota"))
             {
-                principal.quota = quota.into();
+                principal.data.push(PrincipalData::DiskQuota(quota));
             }
 
             directory.principals.push(principal);

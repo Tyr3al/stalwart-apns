@@ -31,19 +31,19 @@ use groupware::{DavResourceName, cache::GroupwareCache};
 use http::HttpSessionManager;
 use hyper::{HeaderMap, Method, StatusCode, header::AUTHORIZATION};
 use imap::core::ImapSessionManager;
-use jmap_proto::types::{collection::Collection, property::Property};
 use pop3::Pop3SessionManager;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use services::SpawnServices;
 use smtp::{SpawnQueueManager, core::SmtpSessionManager};
-use std::str;
+use std::{borrow::Cow, str};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
 use store::rand::{Rng, distr::Alphanumeric, rng};
 use tokio::sync::watch;
+use types::{collection::Collection, field::EmailField};
 use utils::config::Config;
 
 pub mod acl;
@@ -73,11 +73,13 @@ fn webdav_tests() {
         .unwrap()
         .block_on(async {
             // Prepare settings
+            let assisted_discovery = std::env::var("ASSISTED_DISCOVERY").unwrap_or_default() == "1";
             let start_time = Instant::now();
             let delete = true;
             let handle = init_webdav_tests(
                 &std::env::var("STORE")
                     .expect("Missing store type. Try running `STORE=<store_type> cargo test`"),
+                assisted_discovery,
                 delete,
             )
             .await;
@@ -85,12 +87,12 @@ fn webdav_tests() {
             basic::test(&handle).await;
             put_get::test(&handle).await;
             mkcol::test(&handle).await;
-            copy_move::test(&handle).await;
-            prop::test(&handle).await;
+            copy_move::test(&handle, assisted_discovery).await;
+            prop::test(&handle, assisted_discovery).await;
             multiget::test(&handle).await;
             sync::test(&handle).await;
             lock::test(&handle).await;
-            principals::test(&handle).await;
+            principals::test(&handle, assisted_discovery).await;
             acl::test(&handle).await;
             card_query::test(&handle).await;
             cal_query::test(&handle).await;
@@ -121,13 +123,18 @@ pub struct WebDavTest {
     shutdown_tx: watch::Sender<bool>,
 }
 
-async fn init_webdav_tests(store_id: &str, delete_if_exists: bool) -> WebDavTest {
+async fn init_webdav_tests(
+    store_id: &str,
+    assisted_discovery: bool,
+    delete_if_exists: bool,
+) -> WebDavTest {
     // Load and parse config
     let temp_dir = TempDir::new("webdav_tests", delete_if_exists);
     let mut config = Config::new(
         add_test_certs(SERVER)
             .replace("{STORE}", store_id)
             .replace("{TMP}", &temp_dir.path.display().to_string())
+            .replace("{ASSISTED_DISCOVERY}", &assisted_discovery.to_string())
             .replace(
                 "{LEVEL}",
                 &std::env::var("LOG").unwrap_or_else(|_| "disable".to_string()),
@@ -152,7 +159,7 @@ async fn init_webdav_tests(store_id: &str, delete_if_exists: bool) -> WebDavTest
     let cache = Caches::parse(&mut config);
 
     let store = core.storage.data.clone();
-    let (ipc, mut ipc_rxs) = build_ipc(&mut config, false);
+    let (ipc, mut ipc_rxs) = build_ipc(false);
     let inner = Arc::new(Inner {
         shared_core: core.into_shared(),
         data,
@@ -269,7 +276,7 @@ impl WebDavTest {
     }
 
     pub async fn assert_is_empty(&self) {
-        assert_is_empty(self.server.clone()).await;
+        assert_is_empty(&self.server).await;
         self.clear_cache();
     }
 }
@@ -555,6 +562,15 @@ impl DavResponse {
         }
     }
 
+    pub fn expect_body(&self) -> &str {
+        if self.body.is_ok() {
+            self.body.as_ref().unwrap()
+        } else {
+            self.dump_response();
+            panic!("Expected body but no body was returned.")
+        }
+    }
+
     pub fn header(&self, header: &str) -> &str {
         if let Some(value) = self.headers.get(header) {
             value
@@ -758,10 +774,38 @@ fn flatten_xml(xml: &str) -> Vec<(String, String)> {
                 }
             }
             Event::Text(e) => {
-                let text = e.unescape().unwrap();
+                let text = e.xml_content().unwrap();
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    text_content = Some(trimmed.to_string());
+                    if let Some(text_content) = text_content.as_mut() {
+                        text_content.push_str(trimmed);
+                    } else {
+                        text_content = Some(trimmed.to_string());
+                    }
+                }
+            }
+            Event::GeneralRef(entity) => {
+                let value: Cow<str> = match entity.as_ref() {
+                    b"lt" => "<".into(),
+                    b"gt" => ">".into(),
+                    b"amp" => "&".into(),
+                    b"apos" => "'".into(),
+                    b"quot" => "\"".into(),
+                    _ => {
+                        if let Ok(Some(gr)) = entity.resolve_char_ref() {
+                            gr.to_string().into()
+                        } else {
+                            std::str::from_utf8(entity.as_ref())
+                                .unwrap_or_default()
+                                .into()
+                        }
+                    }
+                };
+
+                if let Some(text_content) = text_content.as_mut() {
+                    text_content.push_str(value.as_ref());
+                } else {
+                    text_content = Some(value.into_owned());
                 }
             }
             Event::CData(e) => {
@@ -1010,7 +1054,7 @@ impl WebDavTest {
                 account_id,
                 Collection::Email,
                 document_id,
-                Property::BodyStructure,
+                EmailField::Metadata.into(),
             )
             .await
             .unwrap()
@@ -1035,6 +1079,9 @@ impl WebDavTest {
 const SERVER: &str = r#"
 [server]
 hostname = "webdav.example.org"
+
+[spam-filter]
+enable = false
 
 [http]
 url = "'https://127.0.0.1:8899'"
@@ -1065,21 +1112,12 @@ directory = "'{STORE}'"
 total = 5
 wait = "1ms"
 
-[queue]
-path = "{TMP}"
-hash = 64
-
-[report]
-path = "{TMP}"
-hash = 64
-
 [resolver]
 type = "system"
 
-[queue.outbound]
-next-hop = [ { if = "rcpt_domain == 'example.com'", then = "'local'" }, 
-            { if = "contains(['remote.org', 'foobar.com', 'test.com', 'other_domain.com'], rcpt_domain)", then = "'mock-smtp'" },
-            { else = false } ]
+[queue.strategy]
+route = [ { if = "rcpt_domain == 'example.com'", then = "'local'" }, 
+            { else = "'mx'" } ]
 
 [session.data.add-headers]
 delivered-to = false
@@ -1168,7 +1206,10 @@ minimum-interval = "1s"
 auto-add = true
 
 [dav.collection]
-assisted-discovery = false
+assisted-discovery = {ASSISTED_DISCOVERY}
+
+[sharing]
+allow-directory-query = true
 
 [store."auth"]
 type = "sqlite"

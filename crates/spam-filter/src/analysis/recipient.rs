@@ -101,11 +101,11 @@ impl SpamFilterAnalyzeRecipient for Server {
 
                 // Check for spaces in recipient addresses
                 for token in raw_utf8.split('<') {
-                    if let Some((addr, _)) = token.split_once('>') {
-                        if addr.starts_with(' ') || addr.ends_with(' ') {
-                            ctx.result.add_tag("TO_WRAPPED_IN_SPACES");
-                            break;
-                        }
+                    if let Some((addr, _)) = token.split_once('>')
+                        && (addr.starts_with(' ') || addr.ends_with(' '))
+                    {
+                        ctx.result.add_tag("TO_WRAPPED_IN_SPACES");
+                        break;
                     }
                 }
             }

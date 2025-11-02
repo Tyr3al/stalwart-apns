@@ -8,10 +8,7 @@ use compact_str::ToCompactString;
 
 use crate::{
     Command,
-    protocol::{
-        ProtocolVersion,
-        acl::{self, ModRights, ModRightsOp, Rights},
-    },
+    protocol::acl::{self, ModRights, ModRightsOp, Rights},
     receiver::{Request, bad},
     utf7::utf7_maybe_decode,
 };
@@ -34,7 +31,7 @@ use super::PushUnique;
 */
 
 impl Request<Command> {
-    pub fn parse_acl(self, version: ProtocolVersion) -> trc::Result<acl::Arguments> {
+    pub fn parse_acl(self, is_utf8: bool) -> trc::Result<acl::Arguments> {
         let (has_identifier, has_mod_rights) = match self.command {
             Command::SetAcl => (true, true),
             Command::DeleteAcl | Command::ListRights => (true, false),
@@ -48,7 +45,7 @@ impl Request<Command> {
                 .ok_or_else(|| bad(self.tag.to_compact_string(), "Missing mailbox name."))?
                 .unwrap_string()
                 .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-            version,
+            is_utf8,
         );
         let identifier = if has_identifier {
             tokens
@@ -130,10 +127,7 @@ impl ModRights {
 mod tests {
 
     use crate::{
-        protocol::{
-            ProtocolVersion,
-            acl::{self, ModRights, ModRightsOp, Rights},
-        },
+        protocol::acl::{self, ModRights, ModRightsOp, Rights},
         receiver::Receiver,
     };
 
@@ -217,7 +211,7 @@ mod tests {
                 receiver
                     .parse(&mut command.as_bytes().iter())
                     .unwrap()
-                    .parse_acl(ProtocolVersion::Rev1)
+                    .parse_acl(false)
                     .unwrap(),
                 arguments,
                 "{:?}",

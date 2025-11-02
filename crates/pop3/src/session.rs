@@ -49,10 +49,9 @@ impl SessionManager for Pop3SessionManager {
                 .is_ok()
                 && session.handle_conn().await
                 && session.instance.acceptor.is_tls()
+                && let Ok(mut session) = session.into_tls().await
             {
-                if let Ok(mut session) = session.into_tls().await {
-                    session.handle_conn().await;
-                }
+                session.handle_conn().await;
             }
         }
     }
@@ -190,11 +189,9 @@ impl<T: SessionStream> Session<T> {
 
         trc::error!(err.span_id(self.session_id));
 
-        if write_err {
-            if let Err(err) = self.write_bytes(response).await {
-                trc::error!(err.span_id(self.session_id));
-                return false;
-            }
+        if write_err && let Err(err) = self.write_bytes(response).await {
+            trc::error!(err.span_id(self.session_id));
+            return false;
         }
 
         !disconnect

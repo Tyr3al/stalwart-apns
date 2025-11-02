@@ -111,12 +111,12 @@ async fn report_dmarc() {
     // Expect report
     let message = qr.expect_message().await;
     qr.assert_no_events();
-    assert_eq!(message.recipients.len(), 1);
+    assert_eq!(message.message.recipients.len(), 1);
     assert_eq!(
-        message.recipients.last().unwrap().address,
+        message.message.recipients.last().unwrap().address(),
         "reports@foobar.net"
     );
-    assert_eq!(message.return_path, "reports@example.org");
+    assert_eq!(message.message.return_path, "reports@example.org");
     message
         .read_lines(qr)
         .await

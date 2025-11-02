@@ -38,19 +38,21 @@ impl SpamFilterAnalyzeIp for Server {
             if let (HeaderName::Received, HeaderValue::Received(received)) =
                 (&header.name, &header.value)
             {
-                if let Some(ip) = received.from_ip() {
-                    if !ip.is_loopback() && !self.is_ip_allowed(&ip) {
-                        ips.insert(ElementLocation::new(ip, Location::HeaderReceived));
-                    }
+                if let Some(ip) = received.from_ip()
+                    && !ip.is_loopback()
+                    && !self.is_ip_allowed(&ip)
+                {
+                    ips.insert(ElementLocation::new(ip, Location::HeaderReceived));
                 }
                 for host in [&received.from, &received.helo, &received.by]
                     .into_iter()
                     .flatten()
                 {
-                    if let Host::IpAddr(ip) = host {
-                        if !ip.is_loopback() && !self.is_ip_allowed(ip) {
-                            ips.insert(ElementLocation::new(*ip, Location::HeaderReceived));
-                        }
+                    if let Host::IpAddr(ip) = host
+                        && !ip.is_loopback()
+                        && !self.is_ip_allowed(ip)
+                    {
+                        ips.insert(ElementLocation::new(*ip, Location::HeaderReceived));
                     }
                 }
             }

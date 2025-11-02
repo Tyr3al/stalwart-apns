@@ -59,7 +59,7 @@ mod tests {
                 .serialize()
             )
             .unwrap(),
-            concat!("* THREAD (2 10 11)(49)(1 3)\r\n",)
+            "* THREAD (2 10 11)(49)(1 3)\r\n"
         );
     }
 }

@@ -150,9 +150,9 @@ async fn extensions() {
         .try_deliver(core.clone());
     local.queue_receiver.read_event().await.assert_done();
     let message = remote.queue_receiver.expect_message().await;
-    assert_eq!(message.env_id, Some("abc123".into()));
-    assert!((message.flags & MAIL_RET_HDRS) != 0);
-    assert!((message.flags & MAIL_REQUIRETLS) != 0);
-    assert!((message.flags & MAIL_SMTPUTF8) != 0);
-    assert!((message.recipients.last().unwrap().flags & RCPT_NOTIFY_NEVER) != 0);
+    assert_eq!(message.message.env_id, Some("abc123".into()));
+    assert!((message.message.flags & MAIL_RET_HDRS) != 0);
+    assert!((message.message.flags & MAIL_REQUIRETLS) != 0);
+    assert!((message.message.flags & MAIL_SMTPUTF8) != 0);
+    assert!((message.message.recipients.last().unwrap().flags & RCPT_NOTIFY_NEVER) != 0);
 }

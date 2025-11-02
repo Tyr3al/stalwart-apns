@@ -220,7 +220,7 @@ mod tests {
                 ],
             }
             .serialize(),
-            concat!("* CAPABILITY IMAP4rev2 STARTTLS LOGINDISABLED\r\n",).as_bytes()
+            "* CAPABILITY IMAP4rev2 STARTTLS LOGINDISABLED\r\n".as_bytes()
         );
     }
 }

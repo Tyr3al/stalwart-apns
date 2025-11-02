@@ -4,15 +4,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::collections::HashSet;
-
 use ahash::AHashSet;
-use jmap_proto::types::collection::SyncCollection;
+use std::collections::HashSet;
 use store::{
     Store, ValueKey,
     rand::{self, Rng},
     write::{AlignedBytes, Archive, Archiver, BatchBuilder, DirectoryClass, ValueClass},
 };
+use types::collection::{Collection, SyncCollection};
 
 // FDB max value
 const MAX_VALUE_SIZE: usize = 100000;
@@ -20,13 +19,15 @@ const MAX_VALUE_SIZE: usize = 100000;
 pub async fn test(db: Store) {
     #[cfg(feature = "foundationdb")]
     if matches!(db, Store::FoundationDb(_)) && std::env::var("SLOW_FDB_TRX").is_ok() {
+        use types::collection::Collection;
+
         println!("Running slow FoundationDB transaction tests...");
 
         // Create 900000 keys
         let mut batch = BatchBuilder::new();
         batch
             .with_account_id(0)
-            .with_collection(0)
+            .with_collection(Collection::Email)
             .update_document(0);
         for n in 0..900000 {
             batch.set(
@@ -39,7 +40,7 @@ pub async fn test(db: Store) {
                 batch = BatchBuilder::new();
                 batch
                     .with_account_id(0)
-                    .with_collection(0)
+                    .with_collection(Collection::Email)
                     .update_document(0);
             }
         }
@@ -81,7 +82,7 @@ pub async fn test(db: Store) {
         let mut batch = BatchBuilder::new();
         batch
             .with_account_id(0)
-            .with_collection(0)
+            .with_collection(Collection::Email)
             .update_document(0);
         for n in 0..900000 {
             batch.clear(ValueClass::Config(format!("key{n:10}").into_bytes()));
@@ -91,12 +92,55 @@ pub async fn test(db: Store) {
                 batch = BatchBuilder::new();
                 batch
                     .with_account_id(0)
-                    .with_collection(0)
+                    .with_collection(Collection::Email)
                     .update_document(0);
             }
         }
         db.write(batch.build_all()).await.unwrap();
     }
+
+    // Merge values 1000 times concurrently
+    let mut handles = Vec::new();
+    println!("Merge values 1000 times concurrently...");
+    for _ in 0..1000 {
+        handles.push({
+            let db = db.clone();
+            tokio::spawn(async move {
+                let mut builder = BatchBuilder::new();
+                builder
+                    .with_account_id(0)
+                    .with_collection(Collection::Email)
+                    .update_document(0)
+                    .merge(ValueClass::Property(3), |bytes| {
+                        if let Some(bytes) = bytes {
+                            Ok((u64::from_be_bytes(bytes.try_into().unwrap()) + 1)
+                                .to_be_bytes()
+                                .to_vec())
+                        } else {
+                            Ok(0u64.to_be_bytes().to_vec())
+                        }
+                    });
+                db.write(builder.build_all()).await.unwrap()
+            })
+        });
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    assert_eq!(
+        999,
+        db.get_value::<u64>(ValueKey {
+            account_id: 0,
+            collection: 0,
+            document_id: 0,
+            class: ValueClass::Property(3),
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    );
 
     // Increment a counter 1000 times concurrently
     let mut handles = Vec::new();
@@ -109,7 +153,7 @@ pub async fn test(db: Store) {
                 let mut builder = BatchBuilder::new();
                 builder
                     .with_account_id(0)
-                    .with_collection(0)
+                    .with_collection(Collection::Email)
                     .update_document(0)
                     .add_and_get(ValueClass::Directory(DirectoryClass::UsedQuota(0)), 1);
                 db.write(builder.build_all())
@@ -163,7 +207,7 @@ pub async fn test(db: Store) {
 
                 builder
                     .with_account_id(0)
-                    .with_collection(0)
+                    .with_collection(Collection::Email)
                     .update_document(document_id)
                     .set_versioned(ValueClass::Property(5), archived_value, offset)
                     .log_container_insert(SyncCollection::Email);
@@ -228,7 +272,7 @@ pub async fn test(db: Store) {
         db.write(
             BatchBuilder::new()
                 .with_account_id(0)
-                .with_collection(0)
+                .with_collection(Collection::Email)
                 .update_document(0)
                 .set(ValueClass::Property(1), value.as_slice())
                 .set(ValueClass::Property(0), "check1".as_bytes())
@@ -257,7 +301,7 @@ pub async fn test(db: Store) {
         db.write(
             BatchBuilder::new()
                 .with_account_id(0)
-                .with_collection(0)
+                .with_collection(Collection::Email)
                 .update_document(0)
                 .clear(ValueClass::Property(1))
                 .build_all(),
@@ -300,11 +344,12 @@ pub async fn test(db: Store) {
         let mut batch = BatchBuilder::new();
         batch
             .with_account_id(0)
-            .with_collection(0)
+            .with_collection(Collection::Email)
             .with_account_id(0)
             .update_document(0)
             .clear(ValueClass::Property(0))
             .clear(ValueClass::Property(2))
+            .clear(ValueClass::Property(3))
             .clear(ValueClass::Directory(DirectoryClass::UsedQuota(0)))
             .clear(ValueClass::ChangeId);
 

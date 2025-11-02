@@ -260,14 +260,13 @@ impl<T: SessionStream> Session<T> {
             }
         }
 
-        if let Some(needs_literal) = needs_literal {
-            if let Err(err) = self
+        if let Some(needs_literal) = needs_literal
+            && let Err(err) = self
                 .write_bytes(format!("+ Ready for {} bytes.\r\n", needs_literal).into_bytes())
                 .await
-            {
-                self.write_error(err).await;
-                return SessionResult::Close;
-            }
+        {
+            self.write_error(err).await;
+            return SessionResult::Close;
         }
 
         SessionResult::Continue
@@ -294,25 +293,23 @@ impl<T: SessionStream> Session<T> {
     async fn is_allowed(&self, request: Request<Command>) -> trc::Result<Request<Command>> {
         let state = &self.state;
         // Rate limit request
-        if let State::Authenticated { data } | State::Selected { data, .. } = state {
-            if let Some(rate) = &self.server.core.imap.rate_requests {
-                if data
-                    .server
-                    .core
-                    .storage
-                    .lookup
-                    .is_rate_allowed(
-                        KV_RATE_LIMIT_IMAP,
-                        &data.account_id.to_be_bytes(),
-                        rate,
-                        true,
-                    )
-                    .await?
-                    .is_some()
-                {
-                    return Err(trc::LimitEvent::TooManyRequests.into_err());
-                }
-            }
+        if let State::Authenticated { data } | State::Selected { data, .. } = state
+            && let Some(rate) = &self.server.core.imap.rate_requests
+            && data
+                .server
+                .core
+                .storage
+                .lookup
+                .is_rate_allowed(
+                    KV_RATE_LIMIT_IMAP,
+                    &data.account_id.to_be_bytes(),
+                    rate,
+                    true,
+                )
+                .await?
+                .is_some()
+        {
+            return Err(trc::LimitEvent::TooManyRequests.into_err());
         }
 
         match &request.command {

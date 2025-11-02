@@ -89,10 +89,10 @@ impl<T: SessionStream> SessionData<T> {
         let mut threads: AHashMap<u32, Vec<u32>> = AHashMap::new();
         let state = mailbox.state.lock();
         for item in &cache.emails.items {
-            if result_set.results.contains(item.document_id) {
-                if let Some((imap_id, _)) = state.map_result_id(item.document_id, is_uid) {
-                    threads.entry(item.thread_id).or_default().push(imap_id);
-                }
+            if result_set.results.contains(item.document_id)
+                && let Some((imap_id, _)) = state.map_result_id(item.document_id, is_uid)
+            {
+                threads.entry(item.thread_id).or_default().push(imap_id);
             }
         }
 

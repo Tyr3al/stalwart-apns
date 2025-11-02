@@ -4,35 +4,31 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use super::{AccessToken, ResourceToken, TenantInfo, roles::RolePermissions};
+use crate::{
+    Server,
+    ipc::BroadcastEvent,
+    listener::limiter::{ConcurrencyLimiter, LimiterResult},
+};
 use ahash::AHashSet;
 use directory::{
-    Permission, Principal, PrincipalData, QueryBy, Type,
+    Permission, Principal, PrincipalData, QueryParams, Type,
     backend::internal::{
         lookup::DirectoryStore,
         manage::{ChangedPrincipals, ManageDirectory},
     },
 };
-use jmap_proto::{
-    request::RequestMethod,
-    types::{acl::Acl, collection::Collection, id::Id},
-};
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
 };
-use store::{dispatch::lookup::KeyValue, query::acl::AclQuery};
+use store::{query::acl::AclQuery, rand};
 use trc::AddContext;
+use types::{acl::Acl, collection::Collection};
 use utils::map::{
     bitmap::{Bitmap, BitmapItem},
     vec_map::VecMap,
 };
-
-use crate::{
-    KV_TOKEN_REVISION, Server,
-    listener::limiter::{ConcurrencyLimiter, LimiterResult},
-};
-
-use super::{AccessToken, ResourceToken, TenantInfo, roles::RolePermissions};
 
 pub enum PrincipalOrId {
     Principal(Principal),
@@ -42,83 +38,121 @@ pub enum PrincipalOrId {
 impl Server {
     async fn build_access_token_from_principal(
         &self,
-        mut principal: Principal,
+        principal: Principal,
         revision: u64,
     ) -> trc::Result<AccessToken> {
         let mut role_permissions = RolePermissions::default();
 
-        // Apply role permissions
-        for role_id in principal.roles() {
-            role_permissions.union(self.get_role_permissions(*role_id).await?.as_ref());
-        }
-
-        // Add principal permissions
-        for permission in principal.permissions() {
-            if permission.grant {
-                role_permissions.enabled.set(permission.permission.id());
-            } else {
-                role_permissions.disabled.set(permission.permission.id());
+        // Extract data
+        let mut object_quota = self.core.jmap.max_objects;
+        let mut description = None;
+        let mut tenant_id = None;
+        let mut quota = None;
+        let mut locale = None;
+        let mut member_of = Vec::new();
+        let mut emails = Vec::new();
+        for data in principal.data {
+            match data {
+                PrincipalData::Tenant(v) => tenant_id = Some(v),
+                PrincipalData::MemberOf(v) => member_of.push(v),
+                PrincipalData::Role(v) => {
+                    role_permissions.union(self.get_role_permissions(v).await?.as_ref());
+                }
+                PrincipalData::Permission {
+                    permission_id,
+                    grant,
+                } => {
+                    if grant {
+                        role_permissions.enabled.set(permission_id as usize);
+                    } else {
+                        role_permissions.disabled.set(permission_id as usize);
+                    }
+                }
+                PrincipalData::DiskQuota(v) => quota = Some(v),
+                PrincipalData::ObjectQuota { quota, typ } => {
+                    object_quota[typ as usize] = quota;
+                }
+                PrincipalData::Description(v) => description = Some(v),
+                PrincipalData::PrimaryEmail(v) => {
+                    if emails.is_empty() {
+                        emails.push(v);
+                    } else {
+                        emails.insert(0, v);
+                    }
+                }
+                PrincipalData::EmailAlias(v) => {
+                    emails.push(v);
+                }
+                PrincipalData::Locale(v) => locale = Some(v),
+                _ => (),
             }
         }
 
         // Apply principal permissions
         let mut permissions = role_permissions.finalize();
+        let mut tenant = None;
 
         // SPDX-SnippetBegin
         // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
         // SPDX-License-Identifier: LicenseRef-SEL
 
-        let mut tenant = None;
         #[cfg(feature = "enterprise")]
-        if self.is_enterprise_edition() {
-            if let Some(tenant_id) = principal.tenant {
-                // Limit tenant permissions
-                permissions.intersection(&self.get_role_permissions(tenant_id).await?.enabled);
+        if self.is_enterprise_edition()
+            && let Some(tenant_id) = tenant_id
+        {
+            // Limit tenant permissions
 
-                // Obtain tenant quota
-                tenant = Some(TenantInfo {
-                    id: tenant_id,
-                    quota: self
-                        .store()
-                        .query(QueryBy::Id(tenant_id), false)
-                        .await
-                        .caused_by(trc::location!())?
-                        .ok_or_else(|| {
-                            trc::SecurityEvent::Unauthorized
-                                .into_err()
-                                .details("Tenant not found")
-                                .id(tenant_id)
-                                .caused_by(trc::location!())
-                        })?
-                        .quota
-                        .unwrap_or_default(),
-                });
-            }
+            use directory::QueryParams;
+            permissions.intersection(&self.get_role_permissions(tenant_id).await?.enabled);
+
+            // Obtain tenant quota
+            tenant = Some(TenantInfo {
+                id: tenant_id,
+                quota: self
+                    .store()
+                    .query(QueryParams::id(tenant_id).with_return_member_of(false))
+                    .await
+                    .caused_by(trc::location!())?
+                    .ok_or_else(|| {
+                        trc::SecurityEvent::Unauthorized
+                            .into_err()
+                            .details("Tenant not found")
+                            .id(tenant_id)
+                            .caused_by(trc::location!())
+                    })?
+                    .quota()
+                    .unwrap_or_default(),
+            });
         }
 
         // SPDX-SnippetEnd
 
+        // Build member of and e-mail addresses
+        for &group_id in &member_of {
+            if let Some(group) = self
+                .store()
+                .query(QueryParams::id(group_id).with_return_member_of(false))
+                .await
+                .caused_by(trc::location!())?
+                && group.typ == Type::Group
+            {
+                emails.extend(group.into_email_addresses());
+            }
+        }
+
         // Build access token
         let mut access_token = AccessToken {
-            primary_id: principal.id(),
-            member_of: principal
-                .member_of_mut()
-                .map(std::mem::take)
-                .unwrap_or_default(),
+            primary_id: principal.id,
+            member_of,
             access_to: VecMap::new(),
             tenant,
             name: principal.name,
-            description: principal.description,
-            emails: principal.emails,
-            quota: principal.quota.unwrap_or_default(),
-            locale: principal.data.iter().find_map(|data| {
-                if let PrincipalData::Locale(v) = data {
-                    Some(v.to_string())
-                } else {
-                    None
-                }
-            }),
+            description,
+            emails,
+            quota: quota.unwrap_or_default(),
+            locale,
             permissions,
+            object_quota,
             concurrent_imap_requests: self.core.imap.rate_concurrent.map(ConcurrencyLimiter::new),
             concurrent_http_requests: self
                 .core
@@ -146,7 +180,7 @@ impl Server {
             {
                 if !access_token.is_member(acl_item.to_account_id) {
                     let acl = Bitmap::<Acl>::from(acl_item.permissions);
-                    let collection = Collection::from(acl_item.to_collection);
+                    let collection = acl_item.to_collection;
                     if !collection.is_valid() {
                         return Err(trc::StoreEvent::DataCorruption
                             .ctx(trc::Key::Reason, "Corrupted collection found in ACL key.")
@@ -156,13 +190,13 @@ impl Server {
                     }
 
                     let mut collections: Bitmap<Collection> = Bitmap::new();
-                    if acl.contains(Acl::Read) || acl.contains(Acl::Administer) {
+                    if acl.contains(Acl::Read) {
                         collections.insert(collection);
                     }
-                    if collection == Collection::Mailbox
-                        && (acl.contains(Acl::ReadItems) || acl.contains(Acl::Administer))
+                    if acl.contains(Acl::ReadItems)
+                        && let Some(child_col) = collection.child_collection()
                     {
-                        collections.insert(Collection::Email);
+                        collections.insert(child_col);
                     }
 
                     if !collections.is_empty() {
@@ -179,7 +213,11 @@ impl Server {
     }
 
     async fn build_access_token(&self, account_id: u32, revision: u64) -> trc::Result<AccessToken> {
-        let err = match self.directory().query(QueryBy::Id(account_id), true).await {
+        let err = match self
+            .directory()
+            .query(QueryParams::id(account_id).with_return_member_of(true))
+            .await
+        {
             Ok(Some(principal)) => {
                 return self
                     .build_access_token_from_principal(principal, revision)
@@ -209,7 +247,6 @@ impl Server {
 
         // Obtain current revision
         let principal_id = principal.id();
-        let revision = self.fetch_token_revision(principal_id).await;
 
         match self
             .inner
@@ -218,32 +255,9 @@ impl Server {
             .get_value_or_guard_async(&principal_id)
             .await
         {
-            Ok(token) => {
-                if revision == Some(token.revision) {
-                    Ok(token)
-                } else {
-                    let revision = revision.unwrap_or(u64::MAX);
-                    let token: Arc<AccessToken> = match principal {
-                        PrincipalOrId::Principal(principal) => {
-                            self.build_access_token_from_principal(principal, revision)
-                                .await?
-                        }
-                        PrincipalOrId::Id(account_id) => {
-                            self.build_access_token(account_id, revision).await?
-                        }
-                    }
-                    .into();
-
-                    self.inner
-                        .cache
-                        .access_tokens
-                        .insert(token.primary_id(), token.clone());
-
-                    Ok(token)
-                }
-            }
+            Ok(token) => Ok(token),
             Err(guard) => {
-                let revision = revision.unwrap_or(u64::MAX);
+                let revision = rand::random::<u64>();
                 let token: Arc<AccessToken> = match principal {
                     PrincipalOrId::Principal(principal) => {
                         self.build_access_token_from_principal(principal, revision)
@@ -260,11 +274,21 @@ impl Server {
         }
     }
 
-    pub async fn increment_token_revision(&self, changed_principals: ChangedPrincipals) {
+    pub async fn invalidate_principal_caches(&self, changed_principals: ChangedPrincipals) {
         let mut nested_principals = Vec::new();
+        let mut changed_ids = AHashSet::new();
+        let mut changed_names = Vec::new();
 
         for (id, changed_principal) in changed_principals.iter() {
-            self.increment_revision(*id).await;
+            changed_ids.insert(*id);
+
+            if changed_principal.name_change {
+                self.inner.cache.files.remove(id);
+                self.inner.cache.contacts.remove(id);
+                self.inner.cache.events.remove(id);
+                self.inner.cache.scheduling.remove(id);
+                changed_names.push(*id);
+            }
 
             if changed_principal.member_change {
                 if changed_principal.typ == Type::Tenant {
@@ -282,9 +306,7 @@ impl Server {
                     {
                         Ok(principals) => {
                             for principal in principals.items {
-                                if !changed_principals.contains(principal.id()) {
-                                    self.increment_revision(principal.id()).await;
-                                }
+                                changed_ids.insert(principal.id());
                             }
                         }
                         Err(err) => {
@@ -302,20 +324,14 @@ impl Server {
         }
 
         if !nested_principals.is_empty() {
-            let mut fetched_ids = AHashSet::new();
             let mut ids = nested_principals.into_iter();
             let mut ids_stack = vec![];
 
             loop {
                 if let Some(id) = ids.next() {
                     // Skip if already fetched
-                    if !fetched_ids.insert(id) {
+                    if !changed_ids.insert(id) {
                         continue;
-                    }
-
-                    // Increment revision
-                    if !changed_principals.contains(id) {
-                        self.increment_revision(id).await;
                     }
 
                     // Obtain principal
@@ -339,41 +355,23 @@ impl Server {
                 }
             }
         }
-    }
 
-    async fn increment_revision(&self, id: u32) {
-        if let Err(err) = self
-            .in_memory_store()
-            .counter_incr(
-                KeyValue::with_prefix(KV_TOKEN_REVISION, id.to_be_bytes(), 1).expires(30 * 86400),
-                false,
-            )
-            .await
-        {
-            trc::error!(
-                err.details("Failed to increment principal revision")
-                    .account_id(id)
-            );
-        }
-    }
-
-    pub async fn fetch_token_revision(&self, id: u32) -> Option<u64> {
-        match self
-            .in_memory_store()
-            .counter_get(KeyValue::<()>::build_key(
-                KV_TOKEN_REVISION,
-                id.to_be_bytes(),
-            ))
-            .await
-        {
-            Ok(revision) => (revision as u64).into(),
-            Err(err) => {
-                trc::error!(
-                    err.details("Failed to obtain principal revision")
-                        .account_id(id)
-                );
-                None
+        // Invalidate access tokens in cluster
+        if !changed_ids.is_empty() {
+            let mut ids = Vec::with_capacity(changed_ids.len());
+            for id in changed_ids {
+                self.inner.cache.permissions.remove(&id);
+                self.inner.cache.access_tokens.remove(&id);
+                ids.push(id);
             }
+            self.cluster_broadcast(BroadcastEvent::InvalidateAccessTokens(ids))
+                .await;
+        }
+
+        // Invalidate DAV caches
+        if !changed_names.is_empty() {
+            self.cluster_broadcast(BroadcastEvent::InvalidateGroupwareCache(changed_names))
+                .await;
         }
     }
 }
@@ -412,7 +410,7 @@ impl AccessToken {
     }
 
     pub fn with_permission(mut self, permission: Permission) -> Self {
-        self.permissions.set(permission.id());
+        self.permissions.set(permission.id() as usize);
         self
     }
 
@@ -424,14 +422,26 @@ impl AccessToken {
         s.finish() as u32
     }
 
+    #[inline(always)]
     pub fn primary_id(&self) -> u32 {
         self.primary_id
+    }
+
+    #[inline(always)]
+    pub fn tenant_id(&self) -> Option<u32> {
+        self.tenant.as_ref().map(|t| t.id)
     }
 
     pub fn secondary_ids(&self) -> impl Iterator<Item = &u32> {
         self.member_of
             .iter()
             .chain(self.access_to.iter().map(|(id, _)| id))
+    }
+
+    pub fn member_ids(&self) -> impl Iterator<Item = u32> {
+        [self.primary_id]
+            .into_iter()
+            .chain(self.member_of.iter().copied())
     }
 
     pub fn all_ids(&self) -> impl Iterator<Item = u32> {
@@ -466,7 +476,7 @@ impl AccessToken {
 
     #[inline(always)]
     pub fn has_permission(&self, permission: Permission) -> bool {
-        self.permissions.get(permission.id())
+        self.permissions.get(permission.id() as usize)
     }
 
     pub fn assert_has_permission(&self, permission: Permission) -> trc::Result<bool> {
@@ -491,7 +501,7 @@ impl AccessToken {
                 let item = USIZE_MASK - bytes.leading_zeros();
                 bytes ^= 1 << item;
                 if let Some(permission) =
-                    Permission::from_id((block_num * USIZE_BITS) + item as usize)
+                    Permission::from_id(((block_num * USIZE_BITS) + item as usize) as u32)
                 {
                     permissions.push(permission);
                 }
@@ -500,12 +510,16 @@ impl AccessToken {
         permissions
     }
 
+    #[inline(always)]
+    pub fn object_quota(&self, collection: Collection) -> u32 {
+        self.object_quota[collection as usize]
+    }
+
     pub fn is_shared(&self, account_id: u32) -> bool {
         !self.is_member(account_id) && self.access_to.iter().any(|(id, _)| *id == account_id)
     }
 
-    pub fn shared_accounts(&self, collection: impl Into<Collection>) -> impl Iterator<Item = &u32> {
-        let collection = collection.into();
+    pub fn shared_accounts(&self, collection: Collection) -> impl Iterator<Item = &u32> {
         self.member_of
             .iter()
             .chain(self.access_to.iter().filter_map(move |(id, cols)| {
@@ -527,152 +541,6 @@ impl AccessToken {
 
     pub fn has_account_access(&self, to_account_id: u32) -> bool {
         self.is_member(to_account_id) || self.access_to.iter().any(|(id, _)| *id == to_account_id)
-    }
-
-    pub fn assert_has_access(
-        &self,
-        to_account_id: Id,
-        to_collection: Collection,
-    ) -> trc::Result<&Self> {
-        if self.has_access(to_account_id.document_id(), to_collection) {
-            Ok(self)
-        } else {
-            Err(trc::JmapEvent::Forbidden.into_err().details(format!(
-                "You do not have access to account {}",
-                to_account_id
-            )))
-        }
-    }
-
-    pub fn assert_is_member(&self, account_id: Id) -> trc::Result<&Self> {
-        if self.is_member(account_id.document_id()) {
-            Ok(self)
-        } else {
-            Err(trc::JmapEvent::Forbidden
-                .into_err()
-                .details(format!("You are not an owner of account {}", account_id)))
-        }
-    }
-
-    pub fn assert_has_jmap_permission(&self, request: &RequestMethod) -> trc::Result<()> {
-        let permission = match request {
-            RequestMethod::Get(m) => match &m.arguments {
-                jmap_proto::method::get::RequestArguments::Email(_) => Permission::JmapEmailGet,
-                jmap_proto::method::get::RequestArguments::Mailbox => Permission::JmapMailboxGet,
-                jmap_proto::method::get::RequestArguments::Thread => Permission::JmapThreadGet,
-                jmap_proto::method::get::RequestArguments::Identity => Permission::JmapIdentityGet,
-                jmap_proto::method::get::RequestArguments::EmailSubmission => {
-                    Permission::JmapEmailSubmissionGet
-                }
-                jmap_proto::method::get::RequestArguments::PushSubscription => {
-                    Permission::JmapPushSubscriptionGet
-                }
-                jmap_proto::method::get::RequestArguments::SieveScript => {
-                    Permission::JmapSieveScriptGet
-                }
-                jmap_proto::method::get::RequestArguments::VacationResponse => {
-                    Permission::JmapVacationResponseGet
-                }
-                jmap_proto::method::get::RequestArguments::Principal => {
-                    Permission::JmapPrincipalGet
-                }
-                jmap_proto::method::get::RequestArguments::Quota => Permission::JmapQuotaGet,
-                jmap_proto::method::get::RequestArguments::Blob(_) => Permission::JmapBlobGet,
-            },
-            RequestMethod::Set(m) => match &m.arguments {
-                jmap_proto::method::set::RequestArguments::Email => Permission::JmapEmailSet,
-                jmap_proto::method::set::RequestArguments::Mailbox(_) => Permission::JmapMailboxSet,
-                jmap_proto::method::set::RequestArguments::Identity => Permission::JmapIdentitySet,
-                jmap_proto::method::set::RequestArguments::EmailSubmission(_) => {
-                    Permission::JmapEmailSubmissionSet
-                }
-                jmap_proto::method::set::RequestArguments::PushSubscription => {
-                    Permission::JmapPushSubscriptionSet
-                }
-                jmap_proto::method::set::RequestArguments::SieveScript(_) => {
-                    Permission::JmapSieveScriptSet
-                }
-                jmap_proto::method::set::RequestArguments::VacationResponse => {
-                    Permission::JmapVacationResponseSet
-                }
-            },
-            RequestMethod::Changes(m) => match m.arguments {
-                jmap_proto::method::changes::RequestArguments::Email => {
-                    Permission::JmapEmailChanges
-                }
-                jmap_proto::method::changes::RequestArguments::Mailbox => {
-                    Permission::JmapMailboxChanges
-                }
-                jmap_proto::method::changes::RequestArguments::Thread => {
-                    Permission::JmapThreadChanges
-                }
-                jmap_proto::method::changes::RequestArguments::Identity => {
-                    Permission::JmapIdentityChanges
-                }
-                jmap_proto::method::changes::RequestArguments::EmailSubmission => {
-                    Permission::JmapEmailSubmissionChanges
-                }
-                jmap_proto::method::changes::RequestArguments::Quota => {
-                    Permission::JmapQuotaChanges
-                }
-            },
-            RequestMethod::Copy(m) => match m.arguments {
-                jmap_proto::method::copy::RequestArguments::Email => Permission::JmapEmailCopy,
-            },
-            RequestMethod::CopyBlob(_) => Permission::JmapBlobCopy,
-            RequestMethod::ImportEmail(_) => Permission::JmapEmailImport,
-            RequestMethod::ParseEmail(_) => Permission::JmapEmailParse,
-            RequestMethod::QueryChanges(m) => match m.arguments {
-                jmap_proto::method::query::RequestArguments::Email(_) => {
-                    Permission::JmapEmailQueryChanges
-                }
-                jmap_proto::method::query::RequestArguments::Mailbox(_) => {
-                    Permission::JmapMailboxQueryChanges
-                }
-                jmap_proto::method::query::RequestArguments::EmailSubmission => {
-                    Permission::JmapEmailSubmissionQueryChanges
-                }
-                jmap_proto::method::query::RequestArguments::SieveScript => {
-                    Permission::JmapSieveScriptQueryChanges
-                }
-                jmap_proto::method::query::RequestArguments::Principal => {
-                    Permission::JmapPrincipalQueryChanges
-                }
-                jmap_proto::method::query::RequestArguments::Quota => {
-                    Permission::JmapQuotaQueryChanges
-                }
-            },
-            RequestMethod::Query(m) => match m.arguments {
-                jmap_proto::method::query::RequestArguments::Email(_) => Permission::JmapEmailQuery,
-                jmap_proto::method::query::RequestArguments::Mailbox(_) => {
-                    Permission::JmapMailboxQuery
-                }
-                jmap_proto::method::query::RequestArguments::EmailSubmission => {
-                    Permission::JmapEmailSubmissionQuery
-                }
-                jmap_proto::method::query::RequestArguments::SieveScript => {
-                    Permission::JmapSieveScriptQuery
-                }
-                jmap_proto::method::query::RequestArguments::Principal => {
-                    Permission::JmapPrincipalQuery
-                }
-                jmap_proto::method::query::RequestArguments::Quota => Permission::JmapQuotaQuery,
-            },
-            RequestMethod::SearchSnippet(_) => Permission::JmapSearchSnippet,
-            RequestMethod::ValidateScript(_) => Permission::JmapSieveScriptValidate,
-            RequestMethod::LookupBlob(_) => Permission::JmapBlobLookup,
-            RequestMethod::UploadBlob(_) => Permission::JmapBlobUpload,
-            RequestMethod::Echo(_) => Permission::JmapEcho,
-            RequestMethod::Error(_) => return Ok(()),
-        };
-
-        if self.has_permission(permission) {
-            Ok(())
-        } else {
-            Err(trc::JmapEvent::Forbidden
-                .into_err()
-                .details("You are not authorized to perform this action"))
-        }
     }
 
     pub fn as_resource_token(&self) -> ResourceToken {
@@ -707,6 +575,7 @@ impl AccessToken {
             + (self.access_to.len() * (std::mem::size_of::<u32>() + std::mem::size_of::<u64>()))
             + self.name.len()
             + self.description.as_ref().map_or(0, |v| v.len())
+            + self.locale.as_ref().map_or(0, |v| v.len())
             + self.emails.iter().map(|v| v.len()).sum::<usize>()) as u64;
         self
     }

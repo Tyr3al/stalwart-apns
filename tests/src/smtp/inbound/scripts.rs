@@ -243,14 +243,14 @@ async fn sieve_scripts() {
     assert_eq!(messages.len(), 2);
     let mut messages = messages.into_iter();
     let notification = messages.next().unwrap();
-    assert_eq!(notification.return_path, "");
-    assert_eq!(notification.recipients.len(), 2);
+    assert_eq!(notification.message.return_path, "");
+    assert_eq!(notification.message.recipients.len(), 2);
     assert_eq!(
-        notification.recipients.first().unwrap().address,
+        notification.message.recipients.first().unwrap().address(),
         "john@example.net"
     );
     assert_eq!(
-        notification.recipients.last().unwrap().address,
+        notification.message.recipients.last().unwrap().address(),
         "jane@example.org"
     );
     notification
@@ -323,10 +323,10 @@ async fn sieve_scripts() {
         .await;
 
     let redirect = qr.expect_message().await;
-    assert_eq!(redirect.return_path, "");
-    assert_eq!(redirect.recipients.len(), 1);
+    assert_eq!(redirect.message.return_path, "");
+    assert_eq!(redirect.message.recipients.len(), 1);
     assert_eq!(
-        redirect.recipients.first().unwrap().address,
+        redirect.message.recipients.first().unwrap().address(),
         "redirect@here.email"
     );
     redirect
@@ -351,10 +351,10 @@ async fn sieve_scripts() {
         .await;
 
     let redirect = qr.expect_message().await;
-    assert_eq!(redirect.return_path, "");
-    assert_eq!(redirect.recipients.len(), 1);
+    assert_eq!(redirect.message.return_path, "");
+    assert_eq!(redirect.message.recipients.len(), 1);
     assert_eq!(
-        redirect.recipients.first().unwrap().address,
+        redirect.message.recipients.first().unwrap().address(),
         "redirect@somewhere.email"
     );
     redirect

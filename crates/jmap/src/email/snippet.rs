@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use crate::blob::download::BlobDownload;
 use common::{Server, auth::AccessToken};
 use email::{
     cache::{MessageCacheFetch, email::MessageCacheAccess},
@@ -15,7 +14,8 @@ use jmap_proto::{
         query::Filter,
         search_snippet::{GetSearchSnippetRequest, GetSearchSnippetResponse, SearchSnippet},
     },
-    types::{acl::Acl, collection::Collection, property::Property},
+    object::email::EmailFilter,
+    request::IntoValid,
 };
 use mail_parser::{
     ArchivedHeaderName, core::rkyv::ArchivedGetHeader, decoders::html::html_to_text,
@@ -24,7 +24,7 @@ use nlp::language::{Language, search_snippet::generate_snippet, stemmer::Stemmer
 use std::future::Future;
 use store::backend::MAX_TOKEN_LENGTH;
 use trc::AddContext;
-use utils::BlobHash;
+use types::{acl::Acl, collection::Collection, field::EmailField};
 
 pub trait EmailSearchSnippet: Sync + Send {
     fn email_search_snippet(
@@ -48,8 +48,12 @@ impl EmailSearchSnippet for Server {
 
         for cond in request.filter {
             match cond {
-                Filter::Text(text) | Filter::Subject(text) | Filter::Body(text) => {
-                    if include_term {
+                Filter::Property(cond) => {
+                    if let EmailFilter::Text(text)
+                    | EmailFilter::Subject(text)
+                    | EmailFilter::Body(text) = cond
+                        && include_term
+                    {
                         let (text, language_) =
                             Language::detect(text, self.core.jmap.default_language);
                         language = language_;
@@ -82,7 +86,6 @@ impl EmailSearchSnippet for Server {
                         include_term = !include_term;
                     }
                 }
-                _ => (),
             }
         }
         let account_id = request.account_id.document_id();
@@ -107,7 +110,7 @@ impl EmailSearchSnippet for Server {
             return Err(trc::JmapEvent::RequestTooLarge.into_err());
         }
 
-        for email_id in email_ids {
+        for email_id in email_ids.into_valid() {
             let document_id = email_id.document_id();
             let mut snippet = SearchSnippet {
                 email_id,
@@ -126,7 +129,7 @@ impl EmailSearchSnippet for Server {
                     account_id,
                     Collection::Email,
                     document_id,
-                    Property::BodyStructure,
+                    EmailField::Metadata.into(),
                 )
                 .await?
             {
@@ -158,7 +161,8 @@ impl EmailSearchSnippet for Server {
             } else {*/
             // Download message
             let raw_message = if let Some(raw_message) = self
-                .get_blob(&BlobHash::from(&metadata.blob_hash), 0..usize::MAX)
+                .blob_store()
+                .get_blob(metadata.blob_hash.0.as_slice(), 0..usize::MAX)
                 .await?
             {
                 raw_message

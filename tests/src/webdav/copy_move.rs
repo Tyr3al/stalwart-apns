@@ -11,7 +11,7 @@ use dav_proto::Depth;
 use groupware::DavResourceName;
 use hyper::StatusCode;
 
-pub async fn test(test: &WebDavTest) {
+pub async fn test(test: &WebDavTest, assisted_discovery: bool) {
     let client = test.client("jane");
     let mike_noquota = test.client("mike");
 
@@ -33,12 +33,14 @@ pub async fn test(test: &WebDavTest) {
         let response = client
             .sync_collection(&user_base_path, "", Depth::Infinity, None, ["D:getetag"])
             .await;
+
+        // TODO: Fix tests for assisted discovery
         assert_eq!(
             response.hrefs().len(),
             if resource_type == DavResourceName::File {
                 1
             } else {
-                2
+                2 + usize::from(assisted_discovery)
             },
             "{:?}",
             response.hrefs()

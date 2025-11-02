@@ -5,10 +5,9 @@
  */
 
 use crate::{
-    DavResourceName, RFC_3986,
     cache::calcard::{build_scheduling_resources, path_from_scheduling, resource_from_scheduling},
     calendar::{Calendar, CalendarEvent, CalendarPreferences},
-    contact::{AddressBook, ContactCard},
+    contact::{AddressBook, AddressBookPreferences, ContactCard},
     file::FileNode,
 };
 use ahash::AHashSet;
@@ -17,9 +16,7 @@ use calcard::{
     resource_from_calendar, resource_from_card, resource_from_event,
 };
 use common::{CacheSwap, DavResource, DavResources, Server, auth::AccessToken};
-use directory::backend::internal::manage::ManageDirectory;
 use file::{build_file_resources, build_nested_hierarchy, resource_from_file};
-use jmap_proto::types::collection::{Collection, SyncCollection};
 use std::{sync::Arc, time::Instant};
 use store::{
     ahash::AHashMap,
@@ -28,6 +25,7 @@ use store::{
 };
 use tokio::sync::Semaphore;
 use trc::{AddContext, StoreEvent};
+use types::collection::{Collection, SyncCollection};
 
 pub mod calcard;
 pub mod file;
@@ -79,7 +77,7 @@ impl GroupwareCache for Server {
             SyncCollection::Calendar => &self.inner.cache.events,
             SyncCollection::AddressBook => &self.inner.cache.contacts,
             SyncCollection::FileNode => &self.inner.cache.files,
-            SyncCollection::CalendarScheduling => &self.inner.cache.scheduling,
+            SyncCollection::CalendarEventNotification => &self.inner.cache.scheduling,
             _ => unreachable!(),
         };
         let cache_ = match cache_store.get_value_or_guard_async(&account_id).await {
@@ -121,7 +119,7 @@ impl GroupwareCache for Server {
             .data
             .changes(
                 account_id,
-                collection,
+                collection.into(),
                 Query::Since(cache.highest_change_id),
             )
             .await
@@ -179,29 +177,8 @@ impl GroupwareCache for Server {
             return Ok(cache);
         }
 
-        // Build base path
-        let base_path = if access_token.primary_id() == account_id {
-            format!(
-                "{}/{}/",
-                DavResourceName::from(collection).base_path(),
-                percent_encoding::utf8_percent_encode(&access_token.name, RFC_3986)
-            )
-        } else {
-            let name = self
-                .store()
-                .get_principal_name(account_id)
-                .await
-                .caused_by(trc::location!())?
-                .unwrap_or_else(|| format!("_{account_id}"));
-            format!(
-                "{}/{}/",
-                DavResourceName::from(collection).base_path(),
-                percent_encoding::utf8_percent_encode(&name, RFC_3986)
-            )
-        };
-
         let num_changes = changes.changes.len();
-        let cache = if !matches!(collection, SyncCollection::CalendarScheduling) {
+        let cache = if !matches!(collection, SyncCollection::CalendarEventNotification) {
             let mut updated_resources = AHashMap::with_capacity(8);
             let has_no_children = collection == SyncCollection::FileNode;
 
@@ -244,7 +221,7 @@ impl GroupwareCache for Server {
 
             if rebuild_hierarchy {
                 let mut cache = DavResources {
-                    base_path,
+                    base_path: cache.base_path.clone(),
                     paths: Default::default(),
                     resources,
                     item_change_id: changes.item_change_id.unwrap_or(cache.item_change_id),
@@ -264,7 +241,7 @@ impl GroupwareCache for Server {
                 cache
             } else {
                 DavResources {
-                    base_path,
+                    base_path: cache.base_path.clone(),
                     paths: cache.paths.clone(),
                     resources,
                     item_change_id: changes.item_change_id.unwrap_or(cache.item_change_id),
@@ -307,7 +284,7 @@ impl GroupwareCache for Server {
             }
 
             DavResources {
-                base_path,
+                base_path: cache.base_path.clone(),
                 paths,
                 resources,
                 item_change_id: changes.item_change_id.unwrap_or(cache.item_change_id),
@@ -350,13 +327,19 @@ impl GroupwareCache for Server {
                 .await?;
             AddressBook {
                 name: name.clone(),
-                display_name: self
-                    .core
-                    .groupware
-                    .default_addressbook_display_name
-                    .as_ref()
-                    .map(|display| format!("{display} ({account_name})")),
-                is_default: true,
+                preferences: vec![AddressBookPreferences {
+                    account_id,
+                    name: format!(
+                        "{} ({})",
+                        self.core
+                            .groupware
+                            .default_addressbook_display_name
+                            .as_ref()
+                            .unwrap_or(name),
+                        account_name
+                    ),
+                    ..Default::default()
+                }],
                 ..Default::default()
             }
             .insert(access_token, account_id, document_id, &mut batch)?;
@@ -383,15 +366,15 @@ impl GroupwareCache for Server {
                 name: name.clone(),
                 preferences: vec![CalendarPreferences {
                     account_id,
-                    name: self
-                        .core
-                        .groupware
-                        .default_calendar_display_name
-                        .as_ref()
-                        .map_or_else(
-                            || name.clone(),
-                            |display| format!("{display} ({account_name})",),
-                        ),
+                    name: format!(
+                        "{} ({})",
+                        self.core
+                            .groupware
+                            .default_calendar_display_name
+                            .as_ref()
+                            .unwrap_or(name),
+                        account_name
+                    ),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -533,7 +516,7 @@ async fn full_cache_build(
             .await
         }
         SyncCollection::FileNode => build_file_resources(server, account_id, update_lock).await,
-        SyncCollection::CalendarScheduling => {
+        SyncCollection::CalendarEventNotification => {
             build_scheduling_resources(server, account_id, update_lock).await
         }
         _ => unreachable!(),

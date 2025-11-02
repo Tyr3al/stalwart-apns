@@ -4,12 +4,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::time::Instant;
-
 use common::Server;
 use directory::{Type, backend::internal::manage::ManageDirectory};
 use email::message::{index::IndexMessageText, metadata::MessageMetadata};
-use jmap_proto::types::{collection::Collection, property::Property};
+use std::time::Instant;
 use store::{
     IterateParams, SerializeInfallible, U32_LEN, ValueKey,
     ahash::AHashMap,
@@ -18,12 +16,19 @@ use store::{
     write::{BatchBuilder, BlobOp, TaskQueueClass, ValueClass, key::DeserializeBigEndian, now},
 };
 use trc::{AddContext, MessageIngestEvent, TaskQueueEvent};
-use utils::{BLOB_HASH_LEN, BlobHash};
-
-use super::Task;
+use types::{
+    blob_hash::{BLOB_HASH_LEN, BlobHash},
+    collection::Collection,
+    field::EmailField,
+};
 
 pub trait FtsIndexTask: Sync + Send {
-    fn fts_index(&self, task: &Task, hash: &BlobHash) -> impl Future<Output = bool> + Send;
+    fn fts_index(
+        &self,
+        account_id: u32,
+        document_id: u32,
+        hash: &BlobHash,
+    ) -> impl Future<Output = bool> + Send;
     fn fts_reindex(
         &self,
         account_id: Option<u32>,
@@ -32,7 +37,7 @@ pub trait FtsIndexTask: Sync + Send {
 }
 
 impl FtsIndexTask for Server {
-    async fn fts_index(&self, task: &Task, hash: &BlobHash) -> bool {
+    async fn fts_index(&self, account_id: u32, document_id: u32, hash: &BlobHash) -> bool {
         // Obtain raw message
         let op_start = Instant::now();
         let raw_message = if let Ok(Some(raw_message)) = self
@@ -44,8 +49,8 @@ impl FtsIndexTask for Server {
         } else {
             trc::event!(
                 TaskQueue(TaskQueueEvent::BlobNotFound),
-                AccountId = task.account_id,
-                DocumentId = task.document_id,
+                AccountId = account_id,
+                DocumentId = document_id,
                 BlobId = hash.as_slice(),
             );
             return false;
@@ -53,10 +58,10 @@ impl FtsIndexTask for Server {
 
         match self
             .get_archive_by_property(
-                task.account_id,
+                account_id,
                 Collection::Email,
-                task.document_id,
-                Property::BodyStructure,
+                document_id,
+                EmailField::Metadata.into(),
             )
             .await
         {
@@ -66,14 +71,14 @@ impl FtsIndexTask for Server {
                         // Index message
                         let document =
                             FtsDocument::with_default_language(self.core.jmap.default_language)
-                                .with_account_id(task.account_id)
+                                .with_account_id(account_id)
                                 .with_collection(Collection::Email)
-                                .with_document_id(task.document_id)
+                                .with_document_id(document_id)
                                 .index_message(metadata, &raw_message);
                         if let Err(err) = self.core.storage.fts.index(document).await {
                             trc::error!(
-                                err.account_id(task.account_id)
-                                    .document_id(task.document_id)
+                                err.account_id(account_id)
+                                    .document_id(document_id)
                                     .details("Failed to index email in FTS index")
                             );
 
@@ -82,16 +87,16 @@ impl FtsIndexTask for Server {
 
                         trc::event!(
                             MessageIngest(MessageIngestEvent::FtsIndex),
-                            AccountId = task.account_id,
+                            AccountId = account_id,
                             Collection = Collection::Email,
-                            DocumentId = task.document_id,
+                            DocumentId = document_id,
                             Elapsed = op_start.elapsed(),
                         );
                     }
                     Err(err) => {
                         trc::error!(
-                            err.account_id(task.account_id)
-                                .document_id(task.document_id)
+                            err.account_id(account_id)
+                                .document_id(document_id)
                                 .details("Failed to unarchive email metadata")
                         );
                     }
@@ -101,8 +106,8 @@ impl FtsIndexTask for Server {
                         trc::event!(
                             TaskQueue(TaskQueueEvent::MetadataNotFound),
                             Details = "E-mail blob hash mismatch",
-                            AccountId = task.account_id,
-                            DocumentId = task.document_id,
+                            AccountId = account_id,
+                            DocumentId = document_id,
                         );
                     }
                 }
@@ -111,8 +116,8 @@ impl FtsIndexTask for Server {
             }
             Err(err) => {
                 trc::error!(
-                    err.account_id(task.account_id)
-                        .document_id(task.document_id)
+                    err.account_id(account_id)
+                        .document_id(document_id)
                         .caused_by(trc::location!())
                         .details("Failed to retrieve email metadata")
                 );
@@ -124,8 +129,8 @@ impl FtsIndexTask for Server {
                 trc::event!(
                     TaskQueue(TaskQueueEvent::MetadataNotFound),
                     Details = "E-mail metadata not found",
-                    AccountId = task.account_id,
-                    DocumentId = task.document_id,
+                    AccountId = account_id,
+                    DocumentId = document_id,
                 );
                 true
             }

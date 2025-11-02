@@ -8,13 +8,13 @@ use compact_str::{CompactString, ToCompactString, format_compact};
 
 use crate::{
     Command,
-    protocol::{ProtocolVersion, create, list::Attribute},
+    protocol::{create, list::Attribute},
     receiver::{Request, Token, bad},
     utf7::utf7_maybe_decode,
 };
 
 impl Request<Command> {
-    pub fn parse_create(self, version: ProtocolVersion) -> trc::Result<create::Arguments> {
+    pub fn parse_create(self, is_utf8: bool) -> trc::Result<create::Arguments> {
         if !self.tokens.is_empty() {
             let mut tokens = self.tokens.into_iter();
             let mailbox_name = utf7_maybe_decode(
@@ -23,7 +23,7 @@ impl Request<Command> {
                     .unwrap()
                     .unwrap_string()
                     .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                version,
+                is_utf8,
             );
             let mailbox_role = if let Some(Token::ParenthesisOpen) = tokens.next() {
                 match tokens.next() {
@@ -101,7 +101,7 @@ impl Request<Command> {
 mod tests {
 
     use crate::{
-        protocol::{ProtocolVersion, create, list::Attribute},
+        protocol::{create, list::Attribute},
         receiver::Receiver,
     };
 
@@ -147,7 +147,7 @@ mod tests {
                 receiver
                     .parse(&mut command.as_bytes().iter())
                     .unwrap()
-                    .parse_create(ProtocolVersion::Rev2)
+                    .parse_create(true)
                     .unwrap(),
                 arguments
             );

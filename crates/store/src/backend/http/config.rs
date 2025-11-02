@@ -21,11 +21,7 @@ use super::{HttpStore, HttpStoreConfig, HttpStoreFormat};
 impl Stores {
     pub fn parse_http_stores(&mut self, config: &mut Config, is_reload: bool) {
         // Parse remote lists
-        for id in config
-            .sub_keys("http-lookup", ".url")
-            .map(|k| k.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("http-lookup", ".url") {
             let id_ = id.as_str();
             if !config
                 .property_or_default(("http-lookup", id_, "enable"), "true")

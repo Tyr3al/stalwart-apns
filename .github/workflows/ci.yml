@@ -88,14 +88,14 @@ jobs:
           cosign sign --yes $(jq --arg DOCKERHUB_DIGEST_SHA "$(cat DOCKERHUB_DIGEST_SHA)" -cr '.target."docker-metadata-action".tags | map(select(startswith("index.docker.io/${{github.repository}}")) | . + "@" + $DOCKERHUB_DIGEST_SHA) | join(" ")' ${{ runner.temp }}/${{matrix.variant}}/bake-meta.json)
 
       - name: Attest GHCR
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v3
         with:
           subject-name: ghcr.io/${{github.repository}}
           subject-digest: ${{ env.GHCR_DIGEST_SHA }}
           push-to-registry: true
 
       - name: Attest Dockerhub
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v3
         with:
           subject-name: index.docker.io/${{github.repository}}
           subject-digest: ${{ env.DOCKERHUB_DIGEST_SHA }}
@@ -147,7 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5.0.0
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -200,7 +200,7 @@ jobs:
           key: cargo-cache-${{ steps.cal-dep-shasum.outputs.checksum }}
 
       - name: Inject cache into docker
-        uses: reproducible-containers/buildkit-cache-dance@v3.2.0
+        uses: reproducible-containers/buildkit-cache-dance@v3.3.0
         with:
           cache-map: |
             {
@@ -301,7 +301,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5.0.0
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -334,7 +334,7 @@ jobs:
           - target: x86_64-apple-darwin
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5.0.0
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -412,14 +412,14 @@ jobs:
 
       - name: Attest binary
         id: attest
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
             archive/**/*.tar.gz
             archive/**/*.zip
 
       - name: Use cosign to sign existing artifacts
-        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        uses: sigstore/gh-action-sigstore-python@v3.0.1
         with:
           inputs: |
             archive/**/*.tar.gz

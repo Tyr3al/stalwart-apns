@@ -4,11 +4,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use imap_proto::ResponseType;
-
-use crate::jmap::delivery::SmtpConnection;
+use crate::jmap::mail::delivery::SmtpConnection;
 
 use super::{AssertResult, ImapConnection, Type, append::assert_append_message};
+use imap_proto::ResponseType;
 
 pub async fn test(mut imap_john: &mut ImapConnection, _imap_check: &mut ImapConnection) {
     // Delivery to support account
@@ -51,7 +50,6 @@ pub async fn test(mut imap_john: &mut ImapConnection, _imap_check: &mut ImapConn
         .assert_read(Type::Tagged, ResponseType::Ok)
         .await
         .assert_contains("Shared Folders/support@example.com/INBOX");
-
     imap_jane
         .send("SELECT \"Shared Folders/support@example.com/INBOX\"")
         .await;
@@ -62,6 +60,23 @@ pub async fn test(mut imap_john: &mut ImapConnection, _imap_check: &mut ImapConn
         .await
         .assert_contains("TPS reports ASAP");
     imap_jane.send("UNSELECT").await;
+    imap_jane.assert_read(Type::Tagged, ResponseType::Ok).await;
+
+    // Jane should be able to create folders under the Support account
+    imap_jane
+        .send("CREATE \"Shared Folders/support@example.com/inbox/Jane's Folder\"")
+        .await;
+    imap_jane.assert_read(Type::Tagged, ResponseType::Ok).await;
+    imap_jane.send("LIST \"\" \"*\"").await;
+    imap_jane
+        .assert_read(Type::Tagged, ResponseType::Ok)
+        .await
+        .assert_equals(
+            "* LIST () \"/\" \"Shared Folders/support@example.com/INBOX/Jane's Folder\"",
+        );
+    imap_jane
+        .send("DELETE \"Shared Folders/support@example.com/INBOX/Jane's Folder\"")
+        .await;
     imap_jane.assert_read(Type::Tagged, ResponseType::Ok).await;
 
     // John should have no shared folders

@@ -22,13 +22,14 @@ relay = true
 [session.data.limits]
 messages = 2000
 
-[queue.threads]
-remote = 4
+[queue.virtual.default]
+threads-per-node = 4
 
-[queue.schedule]
+[queue.schedule.default]
 retry = "1s"
 notify = "1d"
 expire = "1d"
+queue-name = "default"
 "#;
 
 const REMOTE: &str = r#"
@@ -136,12 +137,7 @@ async fn concurrent_queue() {
         if m + e != 0 {
             println!("Queue still has {} messages and {} events", m, e);
             /*for inner in &inners {
-                inner
-                    .ipc
-                    .queue_tx
-                    .send(QueueEvent::Refresh)
-                    .await
-                    .unwrap();
+                inner.ipc.queue_tx.send(QueueEvent::Refresh).await.unwrap();
             }*/
         } else {
             break;

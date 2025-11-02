@@ -13,7 +13,6 @@ use crate::{
         uri::DavUriResource,
     },
     file::DavFileResource,
-    fix_percent_encoding,
 };
 use common::{
     Server, auth::AccessToken, sharing::EffectiveAcl, storage::index::ObjectIndexBuilder,
@@ -25,13 +24,13 @@ use groupware::{
 };
 use http_proto::HttpResponse;
 use hyper::StatusCode;
-use jmap_proto::types::{
-    acl::Acl,
-    collection::{Collection, SyncCollection},
-};
 use store::write::{BatchBuilder, now};
 use trc::AddContext;
-use utils::BlobHash;
+use types::{
+    acl::Acl,
+    blob_hash::BlobHash,
+    collection::{Collection, SyncCollection},
+};
 
 pub(crate) trait FileUpdateRequestHandler: Sync + Send {
     fn handle_file_update_request(
@@ -61,11 +60,9 @@ impl FileUpdateRequestHandler for Server {
             .fetch_dav_resources(access_token, account_id, SyncCollection::FileNode)
             .await
             .caused_by(trc::location!())?;
-        let resource_name = fix_percent_encoding(
-            resource
-                .resource
-                .ok_or(DavError::Code(StatusCode::CONFLICT))?,
-        );
+        let resource_name = resource
+            .resource
+            .ok_or(DavError::Code(StatusCode::CONFLICT))?;
 
         if bytes.len() > self.core.groupware.max_file_size {
             return Err(DavError::Code(StatusCode::PAYLOAD_TOO_LARGE));
@@ -106,7 +103,7 @@ impl FileUpdateRequestHandler for Server {
                         collection: resource.collection,
                         document_id: Some(document_id),
                         etag: node.etag().into(),
-                        path: resource_name.as_ref(),
+                        path: resource_name,
                         ..Default::default()
                     }],
                     Default::default(),
@@ -191,7 +188,7 @@ impl FileUpdateRequestHandler for Server {
                     ObjectIndexBuilder::new()
                         .with_current(node)
                         .with_changes(new_node)
-                        .with_tenant_id(access_token),
+                        .with_access_token(access_token),
                 )
                 .caused_by(trc::location!())?;
             let etag = batch.etag();
@@ -226,7 +223,7 @@ impl FileUpdateRequestHandler for Server {
                     account_id,
                     collection: resource.collection,
                     document_id: Some(u32::MAX),
-                    path: orig_resource_name.as_ref(),
+                    path: orig_resource_name,
                     ..Default::default()
                 }],
                 Default::default(),
@@ -265,7 +262,11 @@ impl FileUpdateRequestHandler for Server {
                 created: now as i64,
                 modified: now as i64,
                 dead_properties: Default::default(),
-                acls: Default::default(),
+                acls: parent
+                    .as_ref()
+                    .and_then(|p| p.resource.acls())
+                    .map(|acls| acls.to_vec())
+                    .unwrap_or_default(),
             };
 
             // Prepare write batch
@@ -282,7 +283,7 @@ impl FileUpdateRequestHandler for Server {
                 .custom(
                     ObjectIndexBuilder::<(), _>::new()
                         .with_changes(node)
-                        .with_tenant_id(access_token),
+                        .with_access_token(access_token),
                 )
                 .caused_by(trc::location!())?;
             let etag = batch.etag();

@@ -4,12 +4,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use crate::store::TempDir;
 use ahash::AHashSet;
 use common::{Core, manager::backup::BackupParams};
-use jmap_proto::types::{
-    collection::{Collection, SyncCollection},
-    property::Property,
-};
 use store::{
     rand,
     write::{
@@ -18,9 +15,11 @@ use store::{
     },
     *,
 };
-use utils::BlobHash;
-
-use crate::store::TempDir;
+use types::{
+    blob_hash::BlobHash,
+    collection::{Collection, SyncCollection},
+    field::{Field, MailboxField},
+};
 
 pub async fn test(db: Store) {
     let mut core = Core::default();
@@ -56,20 +55,25 @@ pub async fn test(db: Store) {
         batch.with_account_id(account_id);
 
         // Create properties of different sizes
-        for collection in [0, 1, 2, 3] {
+        for collection in [
+            Collection::Email,
+            Collection::Mailbox,
+            Collection::Thread,
+            Collection::Identity,
+        ] {
             batch.with_collection(collection);
 
             for document_id in [0, 10, 20, 30, 40] {
                 batch.create_document(document_id);
 
-                if collection == u8::from(Collection::Mailbox) {
+                if collection == Collection::Mailbox {
                     batch
                         .set(
-                            ValueClass::Property(Property::Value.into()),
+                            ValueClass::Property(Field::ARCHIVE.into()),
                             random_bytes(10),
                         )
                         .add(
-                            ValueClass::Property(Property::EmailIds.into()),
+                            ValueClass::Property(MailboxField::UidCounter.into()),
                             rand::random(),
                         );
                 }
@@ -164,6 +168,7 @@ pub async fn test(db: Store) {
             ValueClass::Queue(QueueClass::MessageEvent(QueueEvent {
                 due: rand::random(),
                 queue_id: rand::random(),
+                queue_name: rand::random(),
             })),
             random_bytes(idx),
         );

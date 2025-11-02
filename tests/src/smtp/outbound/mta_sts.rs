@@ -31,8 +31,9 @@ const LOCAL: &str = r#"
 [session.rcpt]
 relay = true
 
-[queue.outbound.tls]
+[queue.tls.default]
 mta-sts = "require"
+allow-invalid-certs = false
 
 [report.tls.aggregate]
 send = "weekly"

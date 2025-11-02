@@ -4,25 +4,24 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+use self::assert::AssertValue;
+use crate::backend::MAX_TOKEN_LENGTH;
+use log::ChangeLogBuilder;
+use nlp::tokenizers::word::WordTokenizer;
+use rkyv::util::AlignedVec;
 use std::{
     collections::HashSet,
     time::{Duration, SystemTime},
 };
-
-use log::ChangeLogBuilder;
-use nlp::tokenizers::word::WordTokenizer;
-use rkyv::util::AlignedVec;
-use utils::{
-    BlobHash,
-    map::{
-        bitmap::{Bitmap, ShortId},
-        vec_map::VecMap,
+use types::{
+    blob_hash::BlobHash,
+    collection::{Collection, SyncCollection, VanishedCollection},
+    field::{
+        CalendarField, ContactField, EmailField, EmailSubmissionField, Field, MailboxField,
+        PrincipalField, SieveField,
     },
 };
-
-use crate::{BlobClass, backend::MAX_TOKEN_LENGTH};
-
-use self::assert::AssertValue;
+use utils::map::{bitmap::Bitmap, vec_map::VecMap};
 
 pub mod assert;
 pub mod batch;
@@ -105,7 +104,7 @@ pub struct Batch<'x> {
 #[derive(Debug)]
 pub struct BatchBuilder {
     current_account_id: Option<u32>,
-    current_collection: Option<u8>,
+    current_collection: Option<Collection>,
     current_document_id: Option<u32>,
     changes: VecMap<u32, ChangeLogBuilder>,
     changed_collections: VecMap<u32, ChangedCollection>,
@@ -118,8 +117,9 @@ pub struct BatchBuilder {
 
 #[derive(Debug, Default)]
 pub struct ChangedCollection {
-    pub changed_containers: Bitmap<ShortId>,
-    pub changed_items: Bitmap<ShortId>,
+    pub changed_containers: Bitmap<SyncCollection>,
+    pub changed_items: Bitmap<SyncCollection>,
+    pub share_notification_id: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -128,7 +128,7 @@ pub enum Operation {
         account_id: u32,
     },
     Collection {
-        collection: u8,
+        collection: Collection,
     },
     DocumentId {
         document_id: u32,
@@ -151,9 +151,15 @@ pub enum Operation {
         set: bool,
     },
     Log {
-        collection: u8,
+        collection: LogCollection,
         set: Vec<u8>,
     },
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum LogCollection {
+    Sync(SyncCollection),
+    Vanished(VanishedCollection),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -189,6 +195,10 @@ pub enum ValueClass {
     Report(ReportClass),
     Telemetry(TelemetryClass),
     Any(AnyClass),
+    ShareNotification {
+        notification_id: u64,
+        notify_account_id: u32,
+    },
     DocumentId,
     ChangeId,
 }
@@ -208,6 +218,7 @@ pub enum TaskQueueClass {
         due: u64,
         event_id: u16,
         alarm_id: u16,
+        is_email_alert: bool,
     },
     SendImip {
         due: u64,
@@ -277,6 +288,7 @@ pub enum TelemetryClass {
 pub struct QueueEvent {
     pub due: u64,
     pub queue_id: u64,
+    pub queue_name: [u8; 8],
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
@@ -295,8 +307,15 @@ pub enum ValueOp {
     },
     AtomicAdd(i64),
     AddAndGet(i64),
+    Merge(MergeFn),
     #[default]
     Clear,
+}
+
+#[allow(clippy::type_complexity)]
+pub struct MergeFn {
+    pub fnc: Box<dyn Fn(Option<&[u8]>) -> trc::Result<Vec<u8>> + Send + Sync>,
+    pub fnc_id: u64,
 }
 
 #[derive(Debug, PartialEq, Clone, Eq, Hash)]
@@ -397,29 +416,6 @@ impl BitmapClass {
     }
 }
 
-impl AsRef<BlobClass> for BlobClass {
-    fn as_ref(&self) -> &BlobClass {
-        self
-    }
-}
-
-impl BlobClass {
-    pub fn account_id(&self) -> u32 {
-        match self {
-            BlobClass::Reserved { account_id, .. } | BlobClass::Linked { account_id, .. } => {
-                *account_id
-            }
-        }
-    }
-
-    pub fn is_valid(&self) -> bool {
-        match self {
-            BlobClass::Reserved { expires, .. } => *expires > now(),
-            BlobClass::Linked { .. } => true,
-        }
-    }
-}
-
 impl AssignedIds {
     pub fn push_counter_id(&mut self, id: i64) {
         self.ids.push(AssignedId::Counter(id));
@@ -504,5 +500,84 @@ impl ArchiveVersion {
             ArchiveVersion::Versioned { change_id, .. } => Some(*change_id),
             _ => None,
         }
+    }
+}
+
+impl From<LogCollection> for u8 {
+    fn from(value: LogCollection) -> Self {
+        match value {
+            LogCollection::Sync(col) => col as u8,
+            LogCollection::Vanished(col) => col as u8,
+        }
+    }
+}
+
+impl std::fmt::Debug for MergeFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MergeFn")
+            .field("fnc_id", &self.fnc_id)
+            .finish()
+    }
+}
+
+impl PartialEq for MergeFn {
+    fn eq(&self, other: &Self) -> bool {
+        self.fnc_id == other.fnc_id
+    }
+}
+
+impl Eq for MergeFn {}
+
+impl std::hash::Hash for MergeFn {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.fnc_id.hash(state);
+    }
+}
+
+impl From<ContactField> for ValueClass {
+    fn from(value: ContactField) -> Self {
+        ValueClass::Property(value.into())
+    }
+}
+
+impl From<CalendarField> for ValueClass {
+    fn from(value: CalendarField) -> Self {
+        ValueClass::Property(value.into())
+    }
+}
+
+impl From<EmailField> for ValueClass {
+    fn from(value: EmailField) -> Self {
+        ValueClass::Property(value.into())
+    }
+}
+
+impl From<MailboxField> for ValueClass {
+    fn from(value: MailboxField) -> Self {
+        ValueClass::Property(value.into())
+    }
+}
+
+impl From<PrincipalField> for ValueClass {
+    fn from(value: PrincipalField) -> Self {
+        ValueClass::Property(value.into())
+    }
+}
+
+impl From<SieveField> for ValueClass {
+    fn from(value: SieveField) -> Self {
+        ValueClass::Property(value.into())
+    }
+}
+
+impl From<EmailSubmissionField> for ValueClass {
+    fn from(value: EmailSubmissionField) -> Self {
+        ValueClass::Property(value.into())
+    }
+}
+
+impl From<Field> for ValueClass {
+    fn from(value: Field) -> Self {
+        ValueClass::Property(value.into())
     }
 }

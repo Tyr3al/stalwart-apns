@@ -13,7 +13,7 @@ pub struct SpaceTokenizer<'x> {
 }
 
 impl SpaceTokenizer<'_> {
-    pub fn new(text: &str, max_token_length: usize) -> SpaceTokenizer {
+    pub fn new(text: &'_ str, max_token_length: usize) -> SpaceTokenizer<'_> {
         SpaceTokenizer {
             iterator: text.chars(),
             token: String::new(),

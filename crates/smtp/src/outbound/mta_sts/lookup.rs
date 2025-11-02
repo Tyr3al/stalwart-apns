@@ -59,10 +59,10 @@ impl MtaStsLookup for Server {
         };
 
         // Check if the policy has been cached
-        if let Some(value) = self.inner.cache.dbs_mta_sts.get(domain) {
-            if value.id == record.id {
-                return Ok(value);
-            }
+        if let Some(value) = self.inner.cache.dbs_mta_sts.get(domain)
+            && value.id == record.id
+        {
+            return Ok(value);
         }
 
         // Fetch policy

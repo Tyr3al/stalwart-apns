@@ -86,8 +86,8 @@ impl SpamFilterAnalyzeFrom for Server {
                     ctx.result.add_tag("FROM_HAS_DN");
                 }
 
-                if from_name_trimmed.contains('@') {
-                    if let Some(from_name_addr) = TypesTokenizer::new(from_name_trimmed)
+                if from_name_trimmed.contains('@')
+                    && let Some(from_name_addr) = TypesTokenizer::new(from_name_trimmed)
                         .tokenize_numbers(false)
                         .tokenize_urls(false)
                         .tokenize_urls_without_scheme(false)
@@ -100,19 +100,18 @@ impl SpamFilterAnalyzeFrom for Server {
                             _ => None,
                         })
                         .next()
+                {
+                    if (from_addr_is_valid
+                        && from_name_addr.domain_part.sld != from_addr.domain_part.sld)
+                        || (!env_from_empty
+                            && ctx.output.env_from_addr.domain_part.sld
+                                != from_name_addr.domain_part.sld)
+                        || (env_from_empty
+                            && ctx.output.ehlo_host.sld != from_name_addr.domain_part.sld)
                     {
-                        if (from_addr_is_valid
-                            && from_name_addr.domain_part.sld != from_addr.domain_part.sld)
-                            || (!env_from_empty
-                                && ctx.output.env_from_addr.domain_part.sld
-                                    != from_name_addr.domain_part.sld)
-                            || (env_from_empty
-                                && ctx.output.ehlo_host.sld != from_name_addr.domain_part.sld)
-                        {
-                            ctx.result.add_tag("SPOOF_DISPLAY_NAME");
-                        } else {
-                            ctx.result.add_tag("FROM_NEQ_DISPLAY_NAME");
-                        }
+                        ctx.result.add_tag("SPOOF_DISPLAY_NAME");
+                    } else {
+                        ctx.result.add_tag("FROM_NEQ_DISPLAY_NAME");
                     }
                 }
             }
@@ -188,10 +187,10 @@ impl SpamFilterAnalyzeFrom for Server {
             }
 
             // Check whether read confirmation address is different to from address
-            if let Some(crt) = crt {
-                if crt != from_addr.address {
-                    ctx.result.add_tag("HEADER_RCONFIRM_MISMATCH");
-                }
+            if let Some(crt) = crt
+                && crt != from_addr.address
+            {
+                ctx.result.add_tag("HEADER_RCONFIRM_MISMATCH");
             }
         }
 
@@ -216,10 +215,10 @@ impl SpamFilterAnalyzeFrom for Server {
             }
 
             // Check whether disposition notification address is different to return path
-            if let Some(dnt) = dnt {
-                if dnt != ctx.output.env_from_addr.address {
-                    ctx.result.add_tag("HEADER_FORGED_MDN");
-                }
+            if let Some(dnt) = dnt
+                && dnt != ctx.output.env_from_addr.address
+            {
+                ctx.result.add_tag("HEADER_FORGED_MDN");
             }
         }
     }

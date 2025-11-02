@@ -30,6 +30,7 @@ pub enum Arguments {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     pub is_rev2: bool,
+    pub is_utf8: bool,
     pub is_lsub: bool,
     pub list_items: Vec<ListItem>,
     pub status_items: Vec<StatusItem>,
@@ -202,7 +203,7 @@ impl ListItem {
         }
     }
 
-    pub fn serialize(&self, buf: &mut Vec<u8>, is_rev2: bool, is_lsub: bool) {
+    pub fn serialize(&self, buf: &mut Vec<u8>, is_rev2: bool, is_utf8: bool, is_lsub: bool) {
         let normalized_mailbox_name = utf7_encode(&self.mailbox_name);
         if !is_lsub {
             buf.extend_from_slice(b"* LIST (");
@@ -219,9 +220,11 @@ impl ListItem {
         let mut extra_tags = Vec::new();
 
         if normalized_mailbox_name != self.mailbox_name {
-            if is_rev2 {
+            if is_rev2 || is_utf8 {
                 quoted_string(buf, &self.mailbox_name);
-                extra_tags.push(Tag::OldName(normalized_mailbox_name));
+                if is_rev2 {
+                    extra_tags.push(Tag::OldName(normalized_mailbox_name));
+                }
             } else {
                 quoted_string(buf, &normalized_mailbox_name);
             }
@@ -252,13 +255,13 @@ impl ImapResponse for Response {
             (false, false) => {
                 for (list_item, status_item) in self.list_items.iter().zip(self.status_items.iter())
                 {
-                    list_item.serialize(&mut buf, self.is_rev2, self.is_lsub);
+                    list_item.serialize(&mut buf, self.is_rev2, self.is_utf8, self.is_lsub);
                     status_item.serialize(&mut buf, self.is_rev2);
                 }
             }
             (false, true) => {
                 for list_item in &self.list_items {
-                    list_item.serialize(&mut buf, self.is_rev2, self.is_lsub);
+                    list_item.serialize(&mut buf, self.is_rev2, self.is_utf8, self.is_lsub);
                 }
             }
             (true, false) => {
@@ -335,8 +338,8 @@ mod tests {
             let mut buf_1 = Vec::with_capacity(100);
             let mut buf_2 = Vec::with_capacity(100);
 
-            response.serialize(&mut buf_1, false, false);
-            response.serialize(&mut buf_2, true, false);
+            response.serialize(&mut buf_1, false, false, false);
+            response.serialize(&mut buf_2, true, true, false);
 
             let response_v1 = String::from_utf8(buf_1).unwrap();
             let response_v2 = String::from_utf8(buf_2).unwrap();
@@ -376,6 +379,7 @@ mod tests {
             ],
             is_lsub: false,
             is_rev2: true,
+            is_utf8: true,
         };
         let expected_v2 = concat!(
             "* LIST (\\Subscribed) \"/\" \"INBOX\"\r\n",
@@ -390,6 +394,7 @@ mod tests {
 
         let response_v2 = String::from_utf8(response.clone().serialize()).unwrap();
         response.is_rev2 = false;
+        response.is_utf8 = false;
         response.is_lsub = true;
         response.status_items.clear();
         let response_v1 = String::from_utf8(response.serialize()).unwrap();

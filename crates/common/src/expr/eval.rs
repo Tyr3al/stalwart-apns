@@ -498,7 +498,7 @@ impl<'x> Variable<'x> {
         }
     }
 
-    pub fn to_string(&self) -> StringCow {
+    pub fn to_string(&'_ self) -> StringCow<'_> {
         match self {
             Variable::String(s) => StringCow::Borrowed(s.as_str()),
             Variable::Integer(n) => StringCow::Owned(n.to_compact_string()),
@@ -577,7 +577,7 @@ impl<'x> Variable<'x> {
         }
     }
 
-    pub fn as_array(&self) -> Option<&[Variable]> {
+    pub fn as_array(&'_ self) -> Option<&'_ [Variable<'_>]> {
         match self {
             Variable::Array(l) => Some(l),
             _ => None,

@@ -4,22 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use common::{DavName, Server, auth::AccessToken};
-use dav_proto::{Depth, RequestHeaders};
-use groupware::{
-    DestroyArchive,
-    cache::GroupwareCache,
-    contact::{AddressBook, ContactCard},
-};
-use http_proto::HttpResponse;
-use hyper::StatusCode;
-use jmap_proto::types::{
-    acl::Acl,
-    collection::{Collection, SyncCollection, VanishedCollection},
-};
-use store::write::BatchBuilder;
-use trc::AddContext;
-
+use super::assert_is_unique_uid;
 use crate::{
     DavError, DavMethod,
     common::{
@@ -28,8 +13,21 @@ use crate::{
     },
     file::DavFileResource,
 };
-
-use super::assert_is_unique_uid;
+use common::{DavName, Server, auth::AccessToken};
+use dav_proto::{Depth, RequestHeaders};
+use groupware::{
+    DestroyArchive,
+    cache::GroupwareCache,
+    contact::{AddressBook, AddressBookPreferences, ContactCard},
+};
+use http_proto::HttpResponse;
+use hyper::StatusCode;
+use store::write::BatchBuilder;
+use trc::AddContext;
+use types::{
+    acl::Acl,
+    collection::{Collection, SyncCollection, VanishedCollection},
+};
 
 pub(crate) trait CardCopyMoveRequestHandler: Sync + Send {
     fn handle_card_copy_move_request(
@@ -761,10 +759,16 @@ async fn copy_container(
             .caused_by(trc::location!())?;
     }
 
+    let preference = book.preferences.into_iter().next().unwrap();
     book.name = new_name.to_string();
     book.subscribers.clear();
     book.acls.clear();
-    book.is_default = false;
+    book.preferences = vec![AddressBookPreferences {
+        account_id: to_account_id,
+        name: preference.name,
+        description: preference.description,
+        sort_order: 0,
+    }];
 
     let is_overwrite = to_document_id.is_some();
     let to_document_id = if let Some(to_document_id) = to_document_id {

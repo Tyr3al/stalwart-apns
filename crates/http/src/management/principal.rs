@@ -6,10 +6,9 @@
 
 use common::{KV_BAYES_MODEL_USER, Server, auth::AccessToken};
 use directory::{
-    DirectoryInner, Permission, QueryBy, Type,
+    DirectoryInner, Permission, PrincipalData, QueryBy, QueryParams, Type,
     backend::internal::{
         PrincipalAction, PrincipalField, PrincipalSet, PrincipalUpdate, PrincipalValue,
-        SpecialSecrets,
         lookup::DirectoryStore,
         manage::{
             self, ChangedPrincipals, ManageDirectory, PrincipalList, UpdatePrincipal, not_found,
@@ -168,20 +167,19 @@ impl PrincipalManager for Server {
                     .await?;
 
                 // Set report domain
-                if let Some(report_domain) = report_domain {
-                    if let Err(err) = self
+                if let Some(report_domain) = report_domain
+                    && let Err(err) = self
                         .core
                         .storage
                         .config
                         .set([("report.domain", report_domain)], true)
                         .await
-                    {
-                        trc::error!(err.details("Failed to set report domain"));
-                    }
+                {
+                    trc::error!(err.details("Failed to set report domain"));
                 }
 
                 // Increment revision
-                self.increment_token_revision(result.changed_principals)
+                self.invalidate_principal_caches(result.changed_principals)
                     .await;
 
                 Ok(JsonResponse::new(json!({
@@ -205,20 +203,20 @@ impl PrincipalManager for Server {
                     .unwrap_or_default()
                     .split(',')
                 {
-                    if let Some(typ) = Type::parse(typ) {
-                        if !types.contains(&typ) {
-                            types.push(typ);
-                        }
+                    if let Some(typ) = Type::parse(typ)
+                        && !types.contains(&typ)
+                    {
+                        types.push(typ);
                     }
                 }
 
                 // Parse fields
                 let mut fields = Vec::new();
                 for field in params.get("fields").unwrap_or_default().split(',') {
-                    if let Some(field) = PrincipalField::try_parse(field) {
-                        if !fields.contains(&field) {
-                            fields.push(field);
-                        }
+                    if let Some(field) = PrincipalField::try_parse(field)
+                        && !fields.contains(&field)
+                    {
+                        fields.push(field);
                     }
                 }
 
@@ -252,12 +250,11 @@ impl PrincipalManager for Server {
                     })?;
                 }
 
+                let mut tenant = access_token.tenant.map(|t| t.id);
+
                 // SPDX-SnippetBegin
                 // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
                 // SPDX-License-Identifier: LicenseRef-SEL
-
-                let mut tenant = access_token.tenant.map(|t| t.id);
-
                 #[cfg(feature = "enterprise")]
                 if self.core.is_enterprise_edition() {
                     if tenant.is_none() {
@@ -276,7 +273,6 @@ impl PrincipalManager for Server {
                 } else if types.contains(&Type::Tenant) {
                     return Err(manage::enterprise());
                 }
-
                 // SPDX-SnippetEnd
 
                 let principals = self
@@ -347,6 +343,9 @@ impl PrincipalManager for Server {
 
                 let mut tenant = access_token.tenant.map(|t| t.id);
 
+                // SPDX-SnippetBegin
+                // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+                // SPDX-License-Identifier: LicenseRef-SEL
                 #[cfg(feature = "enterprise")]
                 if self.core.is_enterprise_edition() {
                     if tenant.is_none() {
@@ -365,6 +364,7 @@ impl PrincipalManager for Server {
                 } else if typ == Type::Tenant {
                     return Err(manage::enterprise());
                 }
+                // SPDX-SnippetEnd
 
                 let principals = self
                     .store()
@@ -390,7 +390,7 @@ impl PrincipalManager for Server {
                             {
                                 Ok(changed_principals) => {
                                     // Increment revision
-                                    server.increment_token_revision(changed_principals).await;
+                                    server.invalidate_principal_caches(changed_principals).await;
                                 }
                                 Err(err) => {
                                     trc::error!(err.details("Failed to delete principal"));
@@ -474,7 +474,7 @@ impl PrincipalManager for Server {
 
                         let principal = self
                             .store()
-                            .query(QueryBy::Id(account_id), true)
+                            .query(QueryParams::id(account_id).with_return_member_of(true))
                             .await?
                             .ok_or_else(|| trc::ManageEvent::NotFound.into_err())?;
 
@@ -539,7 +539,7 @@ impl PrincipalManager for Server {
                         }
 
                         // Increment revision
-                        self.increment_token_revision(changed_principals).await;
+                        self.invalidate_principal_caches(changed_principals).await;
 
                         Ok(JsonResponse::new(json!({
                             "data": (),
@@ -572,24 +572,26 @@ impl PrincipalManager for Server {
                         })?;
 
                         // Validate changes
+                        let mut invalidate_logo_cache = false;
                         for change in &changes {
                             match change.field {
-                                PrincipalField::Secrets => {
-                                    self.assert_supported_directory(false)?;
-                                }
-                                PrincipalField::Name
+                                PrincipalField::Secrets
+                                | PrincipalField::Name
                                 | PrincipalField::Emails
                                 | PrincipalField::Quota
                                 | PrincipalField::UsedQuota
                                 | PrincipalField::Description
                                 | PrincipalField::Type
-                                | PrincipalField::Picture
                                 | PrincipalField::MemberOf
                                 | PrincipalField::Members
                                 | PrincipalField::Lists
                                 | PrincipalField::Urls
                                 | PrincipalField::ExternalMembers
                                 | PrincipalField::Locale => (),
+                                PrincipalField::Picture => {
+                                    invalidate_logo_cache |=
+                                        matches!(typ, Type::Domain | Type::Tenant);
+                                }
                                 PrincipalField::Tenant => {
                                     // Tenants are not allowed to change their tenantId
                                     if access_token.tenant.is_some() {
@@ -671,7 +673,12 @@ impl PrincipalManager for Server {
                             .await?;
 
                         // Increment revision
-                        self.increment_token_revision(changed_principals).await;
+                        self.invalidate_principal_caches(changed_principals).await;
+
+                        // Invalidate logo cache if needed
+                        if invalidate_logo_cache {
+                            self.inner.data.logos.lock().clear();
+                        }
 
                         Ok(JsonResponse::new(json!({
                             "data": (),
@@ -698,17 +705,23 @@ impl PrincipalManager for Server {
         if access_token.primary_id() != u32::MAX {
             let principal = self
                 .directory()
-                .query(QueryBy::Id(access_token.primary_id()), false)
+                .query(QueryParams::id(access_token.primary_id()).with_return_member_of(false))
                 .await?
                 .ok_or_else(|| trc::ManageEvent::NotFound.into_err())?;
 
-            for secret in &principal.secrets {
-                if secret.is_otp_auth() {
-                    response.otp_auth = true;
-                } else if let Some((app_name, _)) =
-                    secret.strip_prefix("$app$").and_then(|s| s.split_once('$'))
-                {
-                    response.app_passwords.push(app_name.into());
+            for data in &principal.data {
+                match data {
+                    PrincipalData::OtpAuth(_) => {
+                        response.otp_auth = true;
+                    }
+                    PrincipalData::AppPassword(secret) => {
+                        if let Some((app_name, _)) =
+                            secret.strip_prefix("$app$").and_then(|s| s.split_once('$'))
+                        {
+                            response.app_passwords.push(app_name.into());
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -772,7 +785,7 @@ impl PrincipalManager for Server {
                         .await?;
 
                     // Increment revision
-                    self.increment_token_revision(ChangedPrincipals::from_change(
+                    self.invalidate_principal_caches(ChangedPrincipals::from_change(
                         access_token.primary_id(),
                         Type::Individual,
                         PrincipalField::Secrets,
@@ -794,7 +807,16 @@ impl PrincipalManager for Server {
         }
 
         // Make sure the current directory supports updates
-        self.assert_supported_directory(false)?;
+        if requests.iter().any(|r| {
+            matches!(
+                r,
+                AccountAuthRequest::SetPassword { .. }
+                    | AccountAuthRequest::EnableOtpAuth { .. }
+                    | AccountAuthRequest::DisableOtpAuth { .. }
+            )
+        }) {
+            self.assert_supported_directory(false)?;
+        }
 
         // Build actions
         let mut actions = Vec::with_capacity(requests.len());
@@ -843,7 +865,7 @@ impl PrincipalManager for Server {
             .await?;
 
         // Increment revision
-        self.increment_token_revision(changed_principals).await;
+        self.invalidate_principal_caches(changed_principals).await;
 
         Ok(JsonResponse::new(json!({
             "data": (),

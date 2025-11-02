@@ -235,7 +235,7 @@ impl PropStatBuilder {
 }
 
 // Workaround for Apple bug with missing percent encoding in paths
-pub(crate) fn fix_percent_encoding(path: &str) -> Cow<str> {
+pub(crate) fn fix_percent_encoding(path: &'_ str) -> Cow<'_, str> {
     let (parent, name) = if let Some((parent, name)) = path.rsplit_once('/') {
         (Some(parent), name)
     } else {

@@ -7,7 +7,10 @@
 use crate::{
     RFC_3986,
     cache::GroupwareCache,
-    calendar::{CalendarEvent, CalendarEventData, CalendarScheduling},
+    calendar::{
+        CalendarEvent, CalendarEventData, CalendarEventNotification, ChangedBy,
+        EVENT_NOTIFICATION_IS_CHANGE,
+    },
     scheduling::{
         ItipError, ItipMessage,
         inbound::{
@@ -17,25 +20,29 @@ use crate::{
     },
 };
 use calcard::{
-    common::timezone::Tz,
+    common::{IanaString, timezone::Tz},
     icalendar::{
-        ICalendar, ICalendarComponentType, ICalendarMethod, ICalendarParameter,
-        ICalendarParticipationStatus, ICalendarProperty,
+        ICalendar, ICalendarComponentType, ICalendarEntry, ICalendarMethod, ICalendarParameter,
+        ICalendarParameterName, ICalendarParameterValue, ICalendarParticipationStatus,
+        ICalendarProperty, ICalendarValue,
     },
 };
 use common::{
-    DavName, IDX_EMAIL, IDX_UID, Server,
+    DavName, Server,
     auth::{AccessToken, ResourceToken, oauth::GrantType},
     config::groupware::CalendarTemplateVariable,
     i18n,
 };
-use jmap_proto::types::collection::Collection;
 use store::{
     query::Filter,
     rand,
     write::{BatchBuilder, now},
 };
 use trc::AddContext;
+use types::{
+    collection::Collection,
+    field::{CalendarField, ContactField},
+};
 use utils::{template::Variables, url_params::UrlParams};
 
 pub enum ItipIngestError {
@@ -52,6 +59,7 @@ pub trait ItipIngest: Sync + Send {
         access_token: &AccessToken,
         resource_token: &ResourceToken,
         sender: &str,
+        recipient: &str,
         itip_message: &str,
     ) -> impl Future<Output = Result<Option<ItipMessage<ICalendar>>, ItipIngestError>> + Send;
 
@@ -75,10 +83,11 @@ impl ItipIngest for Server {
         access_token: &AccessToken,
         resource_token: &ResourceToken,
         sender: &str,
+        recipient: &str,
         itip_message: &str,
     ) -> Result<Option<ItipMessage<ICalendar>>, ItipIngestError> {
         // Parse and validate the iTIP message
-        let itip = ICalendar::parse(itip_message)
+        let mut itip = ICalendar::parse(itip_message)
             .map_err(|_| ItipIngestError::Message(ItipError::ICalendarParseError))
             .and_then(|ical| {
                 if ical.components.len() > 1
@@ -89,12 +98,56 @@ impl ItipIngest for Server {
                     Err(ItipIngestError::Message(ItipError::ICalendarParseError))
                 }
             })?;
+
+        // Microsoft Exchange does not include the organizer in REPLY, assume it is the recipient.
+        // This will be validated against the stored event anyway.
+        if itip.components[0]
+            .property(&ICalendarProperty::Method)
+            .and_then(|v| v.values.first())
+            .is_some_and(|v| {
+                matches!(
+                    v,
+                    ICalendarValue::Method(ICalendarMethod::Reply | ICalendarMethod::Request)
+                )
+            })
+        {
+            for comp in &mut itip.components {
+                if comp.component_type.is_scheduling_object() {
+                    let mut has_organizer = false;
+                    let mut has_attendee = false;
+
+                    for entry in &comp.entries {
+                        match entry.name {
+                            ICalendarProperty::Organizer => has_organizer = true,
+                            ICalendarProperty::Attendee => has_attendee = true,
+                            _ => {}
+                        }
+                    }
+
+                    if has_attendee && !has_organizer {
+                        comp.entries.push(ICalendarEntry {
+                            name: ICalendarProperty::Organizer,
+                            params: vec![],
+                            values: vec![ICalendarValue::Text(format!("mailto:{recipient}"))],
+                        });
+                    }
+                }
+            }
+        }
+
         let itip_snapshots = itip_snapshot(&itip, access_token.emails.as_slice(), false)?;
         if !itip_snapshots.sender_is_organizer_or_attendee(sender) {
             return Err(ItipIngestError::Message(
                 ItipError::SenderIsNotOrganizerNorAttendee,
             ));
         }
+
+        // Obtain changedBy
+        let changed_by = if let Some(id) = self.email_to_id(self.directory(), sender, 0).await? {
+            ChangedBy::PrincipalId(id)
+        } else {
+            ChangedBy::CalendarAddress(sender.into())
+        };
 
         // Find event by UID
         let account_id = access_token.primary_id;
@@ -103,7 +156,10 @@ impl ItipIngest for Server {
             .filter(
                 account_id,
                 Collection::CalendarEvent,
-                vec![Filter::eq(IDX_UID, itip_snapshots.uid.as_bytes().to_vec())],
+                vec![Filter::eq(
+                    CalendarField::Uid,
+                    itip_snapshots.uid.as_bytes().to_vec(),
+                )],
             )
             .await
             .caused_by(trc::location!())?
@@ -178,12 +234,18 @@ impl ItipIngest for Server {
                         // Build event for schedule inbox
                         let itip_document_id = self
                             .store()
-                            .assign_document_ids(account_id, Collection::CalendarScheduling, 1)
+                            .assign_document_ids(
+                                account_id,
+                                Collection::CalendarEventNotification,
+                                1,
+                            )
                             .await
                             .caused_by(trc::location!())?;
-                        let itip_message = CalendarScheduling {
-                            itip,
+                        let itip_message = CalendarEventNotification {
+                            event: itip,
+                            changed_by,
                             event_id: Some(document_id),
+                            flags: EVENT_NOTIFICATION_IS_CHANGE,
                             size: itip_message.len() as u32,
                             ..Default::default()
                         };
@@ -217,12 +279,13 @@ impl ItipIngest for Server {
         } else {
             // Verify that auto-adding invitations is allowed
             if !self.core.groupware.itip_auto_add
+                && !matches!(changed_by, ChangedBy::PrincipalId(_))
                 && self
                     .store()
                     .filter(
                         account_id,
                         Collection::ContactCard,
-                        vec![Filter::eq(IDX_EMAIL, sender.as_bytes().to_vec())],
+                        vec![Filter::eq(ContactField::Email, sender.as_bytes().to_vec())],
                     )
                     .await
                     .caused_by(trc::location!())?
@@ -283,12 +346,13 @@ impl ItipIngest for Server {
                 .caused_by(trc::location!())?;
             let itip_document_id = self
                 .store()
-                .assign_document_ids(account_id, Collection::CalendarScheduling, 1)
+                .assign_document_ids(account_id, Collection::CalendarEventNotification, 1)
                 .await
                 .caused_by(trc::location!())?;
-            let itip_message = CalendarScheduling {
-                itip,
+            let itip_message = CalendarEventNotification {
+                event: itip,
                 event_id: Some(document_id),
+                changed_by,
                 size: itip_message.len() as u32,
                 ..Default::default()
             };
@@ -366,18 +430,16 @@ impl ItipIngest for Server {
                         'outer: for entry in &mut component.entries {
                             if entry.name == ICalendarProperty::Attendee
                                 && entry
-                                    .values
-                                    .first()
-                                    .and_then(|v| v.as_text())
-                                    .is_some_and(|v| {
-                                        v.strip_prefix("mailto:")
-                                            .unwrap_or(v)
-                                            .eq_ignore_ascii_case(&rsvp.attendee)
-                                    })
+                                    .calendar_address()
+                                    .is_some_and(|v| v.eq_ignore_ascii_case(&rsvp.attendee))
                             {
                                 let mut add_partstat = true;
                                 for param in &mut entry.params {
-                                    if let ICalendarParameter::Partstat(partstat) = param {
+                                    if let (
+                                        ICalendarParameterName::Partstat,
+                                        ICalendarParameterValue::Partstat(partstat),
+                                    ) = (&param.name, &mut param.value)
+                                    {
                                         if partstat != &rsvp.partstat {
                                             *partstat = rsvp.partstat.clone();
                                             add_partstat = false;
@@ -390,7 +452,7 @@ impl ItipIngest for Server {
                                 if add_partstat {
                                     entry
                                         .params
-                                        .push(ICalendarParameter::Partstat(rsvp.partstat.clone()));
+                                        .push(ICalendarParameter::partstat(rsvp.partstat.clone()));
                                 }
                                 found_participant = true;
                                 did_change = true;
@@ -507,6 +569,9 @@ enum Response {
 }
 
 fn render_response(server: &Server, response: Response, language: &str) -> String {
+    // SPDX-SnippetBegin
+    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+    // SPDX-License-Identifier: LicenseRef-SEL
     #[cfg(feature = "enterprise")]
     let template = server
         .core
@@ -514,6 +579,8 @@ fn render_response(server: &Server, response: Response, language: &str) -> Strin
         .as_ref()
         .and_then(|e| e.template_scheduling_web.as_ref())
         .unwrap_or(&server.core.groupware.itip_template);
+    // SPDX-SnippetEnd
+
     #[cfg(not(feature = "enterprise"))]
     let template = &server.core.groupware.itip_template;
     let locale = i18n::locale_or_default(language);

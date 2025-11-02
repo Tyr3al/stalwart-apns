@@ -139,6 +139,7 @@ pub enum Key {
     ValidTo,
     Value,
     Version,
+    QueueName,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -238,6 +239,7 @@ pub enum HousekeeperEvent {
 pub enum TaskQueueEvent {
     TaskAcquired,
     TaskLocked,
+    TaskIgnored,
     BlobNotFound,
     MetadataNotFound,
 }
@@ -351,7 +353,7 @@ pub enum SmtpEvent {
     ConnectionStart,
     ConnectionEnd,
     Error,
-    RemoteIdNotFound,
+    IdNotFound,
     ConcurrencyLimitExceeded,
     TransferLimitExceeded,
     RateLimitExceeded,

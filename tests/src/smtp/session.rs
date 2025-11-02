@@ -263,20 +263,11 @@ impl TestSession for Session<DummyIo> {
                 0,
             )
             .await;
-        assert_eq!(
-            message
-                .domains
-                .iter()
-                .map(|d| d.domain.clone())
-                .collect::<Vec<_>>(),
-            vec!["foobar.org".to_string(), "test.net".to_string()]
-        );
+
         let rcpts = ["a@foobar.org", "b@test.net", "c@foobar.org", "d@test.net"];
-        let domain_idx = [0, 1, 0, 1];
-        for rcpt in &message.recipients {
+        for rcpt in &message.message.recipients {
             let idx = (rcpt.flags - 1) as usize;
-            assert_eq!(rcpts[idx], rcpt.address);
-            assert_eq!(domain_idx[idx], rcpt.domain_idx);
+            assert_eq!(rcpts[idx], rcpt.address());
         }
     }
 }

@@ -1,14 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: I have a question or problem
-    url: https://stalw.art/docs/
-    about: Read the documentation, use the search bar to find answers to your questions.
-  - name: I have a question or problem not covered in the documentation
     url: https://github.com/stalwartlabs/stalwart/discussions/new?category=q-a
-    about: Open a Q&A discussion
+    about: Before opening a discussion, please read the documentation at stalw.art/docs, use the search bar to check if your question has already been answered, and review your logs (using `trace` level) carefully as the solution might already be there. If you still need help after these steps, feel free to start a new discussion.
   - name: Join Stalwart's Reddit
     url: https://www.reddit.com/r/stalwartlabs
     about: Join our subreddit for help, discussions and release announcements.
   - name: Join Stalwart's Discord
-    url: https://discord.gg/aVQr3jF8jd
+    url: https://discord.com/servers/stalwart-923615863037390889
     about: Join our Discord server for help, discussions and release announcements.

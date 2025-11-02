@@ -4,26 +4,18 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use std::{
-    future::Future,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
-};
-
+use super::NextHop;
+use crate::queue::{Error, ErrorDetails, HostResponse, Status};
 use common::{
     Server,
+    config::smtp::queue::{ConnectionStrategy, IpAndHost, MxConfig},
     expr::{V_MX, functions::ResolveVariable},
 };
 use mail_auth::{IpLookupStrategy, MX};
 use rand::{Rng, seq::SliceRandom};
-
-use crate::queue::{Error, ErrorDetails, Status};
-
-use super::NextHop;
+use std::{future::Future, net::IpAddr, sync::Arc};
 
 pub struct IpLookupResult {
-    pub source_ipv4: Option<IpAddr>,
-    pub source_ipv6: Option<IpAddr>,
     pub remote_ips: Vec<IpAddr>,
 }
 
@@ -39,9 +31,7 @@ pub trait DnsLookup: Sync + Send {
         &self,
         remote_host: &NextHop<'_>,
         envelope: &impl ResolveVariable,
-        max_multihomed: usize,
-        session_id: u64,
-    ) -> impl Future<Output = Result<IpLookupResult, Status<(), Error>>> + Send;
+    ) -> impl Future<Output = Result<IpLookupResult, Status<HostResponse<String>, ErrorDetails>>> + Send;
 }
 
 impl DnsLookup for Server {
@@ -119,16 +109,12 @@ impl DnsLookup for Server {
         &self,
         remote_host: &NextHop<'_>,
         envelope: &impl ResolveVariable,
-        max_multihomed: usize,
-        session_id: u64,
-    ) -> Result<IpLookupResult, Status<(), Error>> {
+    ) -> Result<IpLookupResult, Status<HostResponse<String>, ErrorDetails>> {
         let mut remote_ips = self
             .ip_lookup(
                 remote_host.fqdn_hostname().as_ref(),
-                self.eval_if(&self.core.smtp.queue.ip_strategy, envelope, session_id)
-                    .await
-                    .unwrap_or(IpLookupStrategy::Ipv4thenIpv6),
-                max_multihomed,
+                remote_host.ip_lookup_strategy(),
+                remote_host.max_multi_homed(),
             )
             .await
             .map_err(|err| {
@@ -140,18 +126,21 @@ impl DnsLookup for Server {
                             ..
                         }
                     ) {
-                        Status::PermanentFailure(Error::DnsError("no MX record found.".into()))
-                    } else {
-                        Status::PermanentFailure(Error::ConnectionError(ErrorDetails {
+                        Status::PermanentFailure(ErrorDetails {
                             entity: remote_host.hostname().into(),
-                            details: "record not found for MX".into(),
-                        }))
+                            details: Error::DnsError("no MX record found.".into()),
+                        })
+                    } else {
+                        Status::PermanentFailure(ErrorDetails {
+                            entity: remote_host.hostname().into(),
+                            details: Error::ConnectionError("record not found for MX".into()),
+                        })
                     }
                 } else {
-                    Status::TemporaryFailure(Error::ConnectionError(ErrorDetails {
+                    Status::TemporaryFailure(ErrorDetails {
                         entity: remote_host.hostname().into(),
-                        details: format!("lookup error: {err}"),
-                    }))
+                        details: Error::ConnectionError(format!("lookup error: {err}")),
+                    })
                 }
             })?;
 
@@ -160,69 +149,41 @@ impl DnsLookup for Server {
             if remote_ips.iter().any(|ip| ip.is_loopback()) {
                 remote_ips.retain(|ip| !ip.is_loopback());
                 if remote_ips.is_empty() {
-                    return Err(Status::PermanentFailure(Error::ConnectionError(
-                        ErrorDetails {
-                            entity: remote_host.hostname().into(),
-                            details: "host resolves loopback address".into(),
-                        },
-                    )));
+                    return Err(Status::PermanentFailure(ErrorDetails {
+                        entity: remote_host.hostname().into(),
+                        details: Error::ConnectionError("host resolves loopback address".into()),
+                    }));
                 }
             }
 
-            let mut result = IpLookupResult {
-                source_ipv4: None,
-                source_ipv6: None,
-                remote_ips,
-            };
-
-            // Obtain source IPv4 address
-            let source_ips = self
-                .eval_if::<Vec<Ipv4Addr>, _>(
-                    &self.core.smtp.queue.source_ip.ipv4,
-                    envelope,
-                    session_id,
-                )
-                .await
-                .unwrap_or_default();
-            match source_ips.len().cmp(&1) {
-                std::cmp::Ordering::Equal => {
-                    result.source_ipv4 = IpAddr::from(*source_ips.first().unwrap()).into();
-                }
-                std::cmp::Ordering::Greater => {
-                    result.source_ipv4 =
-                        IpAddr::from(source_ips[rand::rng().random_range(0..source_ips.len())])
-                            .into();
-                }
-                std::cmp::Ordering::Less => (),
-            }
-
-            // Obtain source IPv6 address
-            let source_ips = self
-                .eval_if::<Vec<Ipv6Addr>, _>(
-                    &self.core.smtp.queue.source_ip.ipv6,
-                    envelope,
-                    session_id,
-                )
-                .await
-                .unwrap_or_default();
-            match source_ips.len().cmp(&1) {
-                std::cmp::Ordering::Equal => {
-                    result.source_ipv6 = IpAddr::from(*source_ips.first().unwrap()).into();
-                }
-                std::cmp::Ordering::Greater => {
-                    result.source_ipv6 =
-                        IpAddr::from(source_ips[rand::rng().random_range(0..source_ips.len())])
-                            .into();
-                }
-                std::cmp::Ordering::Less => (),
-            }
-
-            Ok(result)
+            Ok(IpLookupResult { remote_ips })
         } else {
-            Err(Status::TemporaryFailure(Error::DnsError(format!(
-                "No IP addresses found for {:?}.",
-                envelope.resolve_variable(V_MX).to_string()
-            ))))
+            Err(Status::TemporaryFailure(ErrorDetails {
+                entity: remote_host.hostname().into(),
+                details: Error::DnsError(format!(
+                    "No IP addresses found for {:?}.",
+                    envelope.resolve_variable(V_MX).to_string()
+                )),
+            }))
+        }
+    }
+}
+
+pub trait SourceIp {
+    fn source_ip(&self, is_v4: bool) -> Option<&IpAndHost>;
+}
+
+impl SourceIp for ConnectionStrategy {
+    fn source_ip(&self, is_v4: bool) -> Option<&IpAndHost> {
+        let ips = if is_v4 {
+            &self.source_ipv4
+        } else {
+            &self.source_ipv6
+        };
+        match ips.len().cmp(&1) {
+            std::cmp::Ordering::Equal => ips.first(),
+            std::cmp::Ordering::Greater => Some(&ips[rand::rng().random_range(0..ips.len())]),
+            std::cmp::Ordering::Less => None,
         }
     }
 }
@@ -231,7 +192,7 @@ pub trait ToNextHop {
     fn to_remote_hosts<'x, 'y: 'x>(
         &'x self,
         domain: &'y str,
-        max_mx: usize,
+        config: &'x MxConfig,
     ) -> Option<Vec<NextHop<'x>>>;
 }
 
@@ -239,11 +200,11 @@ impl ToNextHop for Vec<MX> {
     fn to_remote_hosts<'x, 'y: 'x>(
         &'x self,
         domain: &'y str,
-        max_mx: usize,
+        config: &'x MxConfig,
     ) -> Option<Vec<NextHop<'x>>> {
         if !self.is_empty() {
             // Obtain max number of MX hosts to process
-            let mut remote_hosts = Vec::with_capacity(max_mx);
+            let mut remote_hosts = Vec::with_capacity(config.max_mx);
 
             'outer: for mx in self.iter() {
                 if mx.exchanges.len() > 1 {
@@ -253,8 +214,9 @@ impl ToNextHop for Vec<MX> {
                         remote_hosts.push(NextHop::MX {
                             host: remote_host.as_str(),
                             is_implicit: false,
+                            config,
                         });
-                        if remote_hosts.len() == max_mx {
+                        if remote_hosts.len() == config.max_mx {
                             break 'outer;
                         }
                     }
@@ -266,8 +228,9 @@ impl ToNextHop for Vec<MX> {
                     remote_hosts.push(NextHop::MX {
                         host: remote_host.as_str(),
                         is_implicit: false,
+                        config,
                     });
-                    if remote_hosts.len() == max_mx {
+                    if remote_hosts.len() == config.max_mx {
                         break;
                     }
                 }
@@ -279,6 +242,7 @@ impl ToNextHop for Vec<MX> {
             vec![NextHop::MX {
                 host: domain,
                 is_implicit: true,
+                config,
             }]
             .into()
         }

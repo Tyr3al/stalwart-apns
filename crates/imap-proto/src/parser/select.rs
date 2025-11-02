@@ -8,10 +8,7 @@ use compact_str::{CompactString, ToCompactString, format_compact};
 
 use crate::{
     Command,
-    protocol::{
-        ProtocolVersion,
-        select::{self, QResync},
-    },
+    protocol::select::{self, QResync},
     receiver::{Request, Token, bad},
     utf7::utf7_maybe_decode,
 };
@@ -19,7 +16,7 @@ use crate::{
 use super::{parse_number, parse_sequence_set};
 
 impl Request<Command> {
-    pub fn parse_select(self, version: ProtocolVersion) -> trc::Result<select::Arguments> {
+    pub fn parse_select(self, is_utf8: bool) -> trc::Result<select::Arguments> {
         if !self.tokens.is_empty() {
             let mut tokens = self.tokens.into_iter().peekable();
 
@@ -30,7 +27,7 @@ impl Request<Command> {
                     .unwrap()
                     .unwrap_string()
                     .map_err(|v| bad(self.tag.to_compact_string(), v))?,
-                version,
+                is_utf8,
             );
 
             // CONDSTORE parameters
@@ -194,7 +191,7 @@ impl Request<Command> {
 mod tests {
     use crate::{
         protocol::{
-            ProtocolVersion, Sequence,
+            Sequence,
             select::{self, QResync},
         },
         receiver::Receiver,
@@ -354,7 +351,7 @@ mod tests {
                         "Failed to parse command '{}': {:?}",
                         command, err
                     ))
-                    .parse_select(ProtocolVersion::Rev2)
+                    .parse_select(true)
                     .unwrap_or_else(|err| panic!(
                         "Failed to parse command '{}': {:?}",
                         command, err

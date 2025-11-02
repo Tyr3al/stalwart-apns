@@ -19,8 +19,7 @@
                <D:supported-privilege>
                  <D:privilege><D:write/></D:privilege>
                  <D:abstract/>
-                 <D:description>Write any object
-                 </D:description>
+                 <D:description>Write any object</D:description>
                </D:supported-privilege>
                <D:supported-privilege>
                  <D:privilege><D:read-acl/></D:privilege>

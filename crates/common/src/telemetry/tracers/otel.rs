@@ -57,23 +57,22 @@ pub(crate) fn spawn_otel_tracer(builder: SubscriberBuilder, mut otel: OtelTracer
                             pending_logs.push(otel.build_log_record(&event));
                         }
 
-                        if otel.span_exporter_enable {
-                            if let Some(span) = event.inner.span.as_ref() {
-                                let span_id = span.span_id().unwrap();
-                                if !event.inner.typ.is_span_end() {
-                                    let events =
-                                        active_spans.entry(span_id).or_insert_with(Vec::new);
-                                    if events.len() < MAX_EVENTS {
-                                        events.push(event);
-                                    }
-                                } else if let Some(events) = active_spans.remove(&span_id) {
-                                    pending_spans.push(build_span_data(
-                                        span,
-                                        &event,
-                                        events.iter().chain(std::iter::once(&event)),
-                                        &instrumentation,
-                                    ));
+                        if otel.span_exporter_enable
+                            && let Some(span) = event.inner.span.as_ref()
+                        {
+                            let span_id = span.span_id().unwrap();
+                            if !event.inner.typ.is_span_end() {
+                                let events = active_spans.entry(span_id).or_insert_with(Vec::new);
+                                if events.len() < MAX_EVENTS {
+                                    events.push(event);
                                 }
+                            } else if let Some(events) = active_spans.remove(&span_id) {
+                                pending_spans.push(build_span_data(
+                                    span,
+                                    &event,
+                                    events.iter().chain(std::iter::once(&event)),
+                                    &instrumentation,
+                                ));
                             }
                         }
                     }
@@ -91,18 +90,17 @@ pub(crate) fn spawn_otel_tracer(builder: SubscriberBuilder, mut otel: OtelTracer
                 if !pending_spans.is_empty() || !pending_logs.is_empty() {
                     next_delivery = now + otel.throttle;
 
-                    if !pending_spans.is_empty() {
-                        if let Err(err) = otel
+                    if !pending_spans.is_empty()
+                        && let Err(err) = otel
                             .span_exporter
                             .export(std::mem::take(&mut pending_spans))
                             .await
-                        {
-                            trc::event!(
-                                Telemetry(TelemetryEvent::OtelExporterError),
-                                Details = "Failed to export spans",
-                                Reason = err.to_string()
-                            );
-                        }
+                    {
+                        trc::event!(
+                            Telemetry(TelemetryEvent::OtelExporterError),
+                            Details = "Failed to export spans",
+                            Reason = err.to_string()
+                        );
                     }
 
                     if !pending_logs.is_empty() {

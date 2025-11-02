@@ -10,7 +10,7 @@ use dav_proto::schema::property::{DavProperty, PrincipalProperty, WebDavProperty
 use groupware::DavResourceName;
 use hyper::StatusCode;
 
-pub async fn test(test: &WebDavTest) {
+pub async fn test(test: &WebDavTest, assisted_discovery: bool) {
     println!("Running principals tests...");
     let client = test.client("jane");
     let principal_path = format!("D:href:{}/", DavResourceName::Principal.base_path());
@@ -55,7 +55,7 @@ pub async fn test(test: &WebDavTest) {
             .get(DavProperty::WebDav(WebDavProperty::Owner))
             .with_values([path_pal.as_str()])
             .with_status(StatusCode::OK);
-        if *account == "jane" {
+        if *account == "jane" && !assisted_discovery {
             props
                 .get(DavProperty::Principal(PrincipalProperty::CalendarHomeSet))
                 .with_values([path_cal.as_str(), path_support_cal.as_str()])
@@ -207,16 +207,39 @@ pub async fn test(test: &WebDavTest) {
             .get(DavProperty::WebDav(WebDavProperty::CurrentUserPrincipal))
             .with_values([jane_principal_path.as_str()])
             .with_status(StatusCode::OK);
-        props
-            .get(DavProperty::Principal(PrincipalProperty::CalendarHomeSet))
-            .with_values([format!("D:href:{}/jane/", DavResourceName::Cal.base_path()).as_str()])
-            .with_status(StatusCode::OK);
-        props
-            .get(DavProperty::Principal(
-                PrincipalProperty::AddressbookHomeSet,
-            ))
-            .with_values([format!("D:href:{}/jane/", DavResourceName::Card.base_path()).as_str()])
-            .with_status(StatusCode::OK);
+        if assisted_discovery {
+            props
+                .get(DavProperty::Principal(PrincipalProperty::CalendarHomeSet))
+                .with_values(
+                    [format!("D:href:{}/jane/", DavResourceName::Cal.base_path()).as_str()],
+                )
+                .with_status(StatusCode::OK);
+            props
+                .get(DavProperty::Principal(
+                    PrincipalProperty::AddressbookHomeSet,
+                ))
+                .with_values([
+                    format!("D:href:{}/jane/", DavResourceName::Card.base_path()).as_str(),
+                ])
+                .with_status(StatusCode::OK);
+        } else {
+            props
+                .get(DavProperty::Principal(PrincipalProperty::CalendarHomeSet))
+                .with_values([
+                    format!("D:href:{}/jane/", DavResourceName::Cal.base_path()).as_str(),
+                    format!("D:href:{}/support/", DavResourceName::Cal.base_path()).as_str(),
+                ])
+                .with_status(StatusCode::OK);
+            props
+                .get(DavProperty::Principal(
+                    PrincipalProperty::AddressbookHomeSet,
+                ))
+                .with_values([
+                    format!("D:href:{}/jane/", DavResourceName::Card.base_path()).as_str(),
+                    format!("D:href:{}/support/", DavResourceName::Card.base_path()).as_str(),
+                ])
+                .with_status(StatusCode::OK);
+        }
 
         for (account, _, name, _) in TEST_USERS
             .iter()
@@ -263,7 +286,7 @@ pub async fn test(test: &WebDavTest) {
                 .get(DavProperty::WebDav(WebDavProperty::Owner))
                 .with_values([path_pal.as_str()])
                 .with_status(StatusCode::OK);
-            if *account == "jane" {
+            if *account == "jane" && !assisted_discovery {
                 props
                     .get(DavProperty::Principal(PrincipalProperty::CalendarHomeSet))
                     .with_values([path_cal.as_str(), path_support_cal.as_str()])

@@ -275,11 +275,7 @@ impl Scripting {
 
         // Parse trusted scripts
         let mut trusted_scripts = AHashMap::new();
-        for id in config
-            .sub_keys("sieve.trusted.scripts", ".contents")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("sieve.trusted.scripts", ".contents") {
             match trusted_compiler.compile(
                 config
                     .value(("sieve.trusted.scripts", id.as_str(), "contents"))
@@ -298,11 +294,7 @@ impl Scripting {
 
         // Parse untrusted scripts
         let mut untrusted_scripts = AHashMap::new();
-        for id in config
-            .sub_keys("sieve.untrusted.scripts", ".contents")
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-        {
+        for id in config.sub_keys("sieve.untrusted.scripts", ".contents") {
             match untrusted_compiler.compile(
                 config
                     .value(("sieve.untrusted.scripts", id.as_str(), "contents"))

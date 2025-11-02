@@ -22,10 +22,10 @@ impl VerifyPolicy for Policy {
                         }
                     }
                     MxPattern::StartsWith(domain) => {
-                        if let Some((_, suffix)) = mx_host.split_once('.') {
-                            if suffix == domain {
-                                return true;
-                            }
+                        if let Some((_, suffix)) = mx_host.split_once('.')
+                            && suffix == domain
+                        {
+                            return true;
                         }
                     }
                 }

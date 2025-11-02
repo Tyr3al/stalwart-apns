@@ -5,13 +5,13 @@
  */
 
 use super::{EmailType, MemoryDirectory};
-use crate::{Principal, QueryBy, backend::RcptType};
+use crate::{Principal, QueryBy, QueryParams, backend::RcptType};
 
 use mail_send::Credentials;
 
 impl MemoryDirectory {
-    pub async fn query(&self, by: QueryBy<'_>) -> trc::Result<Option<Principal>> {
-        match by {
+    pub async fn query(&self, by: QueryParams<'_>) -> trc::Result<Option<Principal>> {
+        match by.by {
             QueryBy::Name(name) => {
                 for principal in &self.principals {
                     if principal.name() == name {
@@ -35,7 +35,7 @@ impl MemoryDirectory {
 
                 for principal in &self.principals {
                     if principal.name() == username {
-                        return if principal.verify_secret(secret).await? {
+                        return if principal.verify_secret(secret, false, false).await? {
                             Ok(Some(principal.clone()))
                         } else {
                             Ok(None)
@@ -80,8 +80,8 @@ impl MemoryDirectory {
                     if let EmailType::List(uid) = item {
                         for principal in &self.principals {
                             if principal.id == *uid {
-                                if let Some(addr) = principal.emails.first() {
-                                    result.push(addr.clone())
+                                if let Some(addr) = principal.primary_email() {
+                                    result.push(addr.to_string())
                                 }
                                 break;
                             }
