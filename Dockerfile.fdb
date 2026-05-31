@@ -2,7 +2,7 @@
 
 FROM debian:trixie-slim AS chef
 ARG TARGETARCH
-ARG FDB_VERSION_RANGE="7.4"
+ARG FDB_VERSION="7.3.77"
 RUN apt-get update && \
     export DEBIAN_FRONTEND=noninteractive && \
     apt-get install -yq --no-install-recommends \
@@ -23,11 +23,11 @@ RUN curl https://sh.rustup.rs -sSf | \
 RUN \
     ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
-        amd64) FDB_ARCH=amd64 ;; \
-        arm64) FDB_ARCH=aarch64 ;; \
+        amd64|x86_64) FDB_ARCH=amd64 ;; \
+        arm64|aarch64) FDB_ARCH=aarch64 ;; \
         *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl --retry 5 -fLso fdb-client.deb "$(curl --retry 5 -fLs 'https://api.github.com/repos/apple/foundationdb/releases?per_page=100' | jq --arg FDB_ARCH "$FDB_ARCH" --arg RANGE "${FDB_VERSION_RANGE}" -r '[.[] | select(.tag_name | startswith($RANGE + "."))] | sort_by(.tag_name | split(".") | map(tonumber)) | reverse | .[0].assets[] | select(.name | test("foundationdb-clients.*" + $FDB_ARCH + ".deb$")) | .browser_download_url')" && \
+    curl --retry 5 -fLso fdb-client.deb "$(curl --retry 5 -fLs 'https://api.github.com/repos/apple/foundationdb/releases?per_page=100' | jq --arg FDB_ARCH "$FDB_ARCH" --arg FDB_VERSION "${FDB_VERSION}" -r '[.[] | select(.tag_name == $FDB_VERSION or .tag_name == ("v" + $FDB_VERSION))] | .[0].assets[] | select(.name | test("foundationdb-clients.*" + $FDB_ARCH + ".deb$")) | .browser_download_url')" && \
     mkdir -p /fdb && \
     dpkg -x fdb-client.deb /fdb && \
     mv /fdb/usr/include/foundationdb /usr/include && \
