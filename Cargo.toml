@@ -72,3 +72,6 @@ incremental = false
 debug-assertions = false
 overflow-checks = false
 rpath = false
+
+[patch.crates-io]
+dns-update = { git = "https://github.com/stalwartlabs/dns-update" }
