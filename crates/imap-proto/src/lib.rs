@@ -78,6 +78,9 @@ pub enum Command {
 
     // RFC 9698
     GetJmapAccess,
+
+    // Apple Push Service (XAPPLEPUSHSERVICE)
+    XApplePushService,
 }
 
 impl Command {

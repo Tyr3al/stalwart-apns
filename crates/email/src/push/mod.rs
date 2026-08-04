@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+pub mod xaps;
+
 use jmap_proto::method::query::Filter;
 use jmap_proto::object::email::EmailFilter;
 use jmap_proto::object::push_subscription::EmailPushProperty;

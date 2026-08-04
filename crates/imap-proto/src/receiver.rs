@@ -73,6 +73,7 @@ pub struct Receiver<T: CommandParser> {
 }
 
 const ARG_MAX_LEN: usize = 8000;
+const COMMAND_MAX_LEN: usize = 32;
 
 struct ArgumentBuffer {
     buf: Vec<u8>,
@@ -180,9 +181,12 @@ impl<T: CommandParser> Receiver<T> {
                 State::Command { is_uid } => {
                     if ch.is_ascii_alphanumeric() {
                         self.buf
-                            .push_checked(ch.to_ascii_uppercase(), 15)
+                            .push_checked(ch.to_ascii_uppercase(), COMMAND_MAX_LEN)
                             .map_err(|_| {
-                                self.error_reset("Command exceeds maximum length of 15 characters.")
+                                self.error_reset(format_compact!(
+                                    "Command exceeds maximum length of {} characters.",
+                                    COMMAND_MAX_LEN
+                                ))
                             })?;
                     } else if ch.is_ascii_whitespace() {
                         if !self.buf.is_empty() {

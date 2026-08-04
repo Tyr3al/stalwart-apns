@@ -34,6 +34,7 @@ pub mod status;
 pub mod store;
 pub mod subscribe;
 pub mod thread;
+pub mod xapple;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolVersion {
@@ -765,6 +766,7 @@ impl Display for Command {
             Command::GetQuota => write!(f, "GETQUOTA"),
             Command::GetQuotaRoot => write!(f, "GETQUOTAROOT"),
             Command::GetJmapAccess => write!(f, "GETJMAPACCESS"),
+            Command::XApplePushService => write!(f, "XAPPLEPUSHSERVICE"),
         }
     }
 }

@@ -252,6 +252,10 @@ impl<T: SessionStream> Session<T> {
                     .handle_jmap_access(request)
                     .await
                     .map(|_| SessionResult::Continue),
+                Command::XApplePushService => self
+                    .handle_xapple_push_service(request)
+                    .await
+                    .map(|_| SessionResult::Continue),
             };
 
             match result {
@@ -383,7 +387,8 @@ impl<T: SessionStream> Session<T> {
             | Command::Unauthenticate
             | Command::GetQuota
             | Command::GetQuotaRoot
-            | Command::GetJmapAccess => {
+            | Command::GetJmapAccess
+            | Command::XApplePushService => {
                 if let State::Authenticated { .. } | State::Selected { .. } = state {
                     Ok(request)
                 } else {

@@ -54,6 +54,7 @@ pub enum Capability {
     QuotaResource(QuotaResourceName),
     QuotaSet,
     JmapAccess,
+    XApplePushService,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +122,7 @@ impl Capability {
             }
             Capability::QuotaSet => b"QUOTA=SET",
             Capability::JmapAccess => b"JMAPACCESS",
+            Capability::XApplePushService => b"XAPPLEPUSHSERVICE",
         });
     }
 
@@ -133,6 +135,7 @@ impl Capability {
             Capability::LiteralPlus,
             Capability::Id,
             Capability::Utf8Accept,
+            Capability::XApplePushService,
         ];
 
         if is_authenticated {
