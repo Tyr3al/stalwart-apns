@@ -114,9 +114,12 @@ impl<T: SessionStream> Session<T> {
         self.write_bytes(
             StatusResponse::ok("Authentication successful")
                 .with_code(ResponseCode::Capability {
-                    capabilities: Capability::all_capabilities(
-                        true,
-                        !self.is_tls && self.instance.acceptor.is_tls(),
+                    capabilities: crate::filter_xaps_capability(
+                        Capability::all_capabilities(
+                            true,
+                            !self.is_tls && self.instance.acceptor.is_tls(),
+                        ),
+                        self.xaps_ready(),
                     ),
                 })
                 .with_tag(tag)

@@ -5,7 +5,7 @@
  */
 
 use super::{ImapSessionManager, Session, State};
-use crate::{GREETING_WITH_TLS, GREETING_WITHOUT_TLS};
+use crate::build_greeting;
 use common::{
     BuildServer,
     network::{SessionData, SessionManager, SessionResult, SessionStream, stream::NullIo},
@@ -41,6 +41,19 @@ impl SessionManager for ImapSessionManager {
     }
 }
 
+impl<T: SessionStream> Session<T> {
+    /// Whether XAPS push is enabled and fully configured. When false, the
+    /// XAPPLEPUSHSERVICE capability is hidden and the command is rejected.
+    #[cfg(feature = "xaps")]
+    pub fn xaps_ready(&self) -> bool {
+        self.server.core.xaps.is_ready()
+    }
+
+    #[cfg(not(feature = "xaps"))]
+    pub fn xaps_ready(&self) -> bool {
+        false
+    }
+}
 impl<T: SessionStream> Session<T> {
     pub async fn handle_conn(&mut self) -> bool {
         let mut buf = vec![0; 8192];
@@ -118,13 +131,17 @@ impl<T: SessionStream> Session<T> {
     ) -> Result<Session<T>, ()> {
         // Write greeting
         let is_tls = session.stream.is_tls();
-        let greeting = if !is_tls && session.instance.acceptor.is_tls() {
-            &GREETING_WITH_TLS
-        } else {
-            &GREETING_WITHOUT_TLS
-        };
+        let server = manager.inner.build_server();
+        #[cfg(feature = "xaps")]
+        let xaps_ready = server.core.xaps.is_ready();
+        #[cfg(not(feature = "xaps"))]
+        let xaps_ready = false;
+        let greeting = build_greeting(
+            !is_tls && session.instance.acceptor.is_tls(),
+            xaps_ready,
+        );
 
-        if let Err(err) = session.stream.write_all(greeting).await {
+        if let Err(err) = session.stream.write_all(&greeting).await {
             trc::event!(
                 Network(trc::NetworkEvent::WriteError),
                 Reason = err.to_string(),
@@ -137,7 +154,6 @@ impl<T: SessionStream> Session<T> {
 
         // Split stream into read and write halves
         let (stream_rx, stream_tx) = tokio::io::split(session.stream);
-        let server = manager.inner.build_server();
 
         Ok(Session {
             receiver: Receiver::with_max_request_size(server.core.imap.max_request_size),

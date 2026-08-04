@@ -49,7 +49,7 @@ hashify = { version = "0.2" }
 [dev-dependencies]
 
 [features]
-xaps = ["common/xaps", "email/xaps"]
+xaps = ["common/xaps", "email/xaps", "services/xaps"]
 test_mode = []
 dev_mode = []
 enterprise = []

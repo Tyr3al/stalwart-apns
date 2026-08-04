@@ -40,6 +40,32 @@ pub struct XapsConfig {
 }
 
 impl XapsConfig {
+    /// Returns true when the XAPS feature is enabled and fully configured so
+    /// that push notifications can actually be delivered. Used to hide the
+    /// `XAPPLEPUSHSERVICE` capability and reject registrations when the
+    /// configuration is broken.
+    pub fn is_ready(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        if self.topic.as_deref().is_none_or(str::is_empty) {
+            return false;
+        }
+        let has_token_auth = self.key_file_p8.as_deref().is_some_and(|k| !k.is_empty())
+            && self.key_id.as_deref().is_some_and(|k| !k.is_empty())
+            && self.team_id.as_deref().is_some_and(|k| !k.is_empty());
+        let has_cert_auth =
+            self.certificate_file_pem.as_deref().is_some_and(|c| !c.is_empty())
+                && self.certificate_file_pem_key
+                    .as_deref()
+                    .is_some_and(|k| !k.is_empty());
+        let has_p12_auth =
+            self.certificate_file_p12.as_deref().is_some_and(|c| !c.is_empty());
+        has_token_auth || has_cert_auth || has_p12_auth
+    }
+}
+
+impl XapsConfig {
     pub async fn parse(bp: &mut Bootstrap) -> Self {
         let xaps = bp.setting_infallible::<Xaps>().await;
         let key_file_p8 = xaps

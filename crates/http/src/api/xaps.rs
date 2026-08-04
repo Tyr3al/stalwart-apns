@@ -11,6 +11,7 @@
 //! - `GET    /api/xaps/registrations/<account>`            list one account's devices (admin or self)
 //! - `DELETE /api/xaps/registrations/<account>`            remove all devices of an account (admin or self)
 //! - `DELETE /api/xaps/registrations/<account>/<apsAccountId>` remove one device (admin or self)
+//! - `POST   /api/xaps/test/<account>/<apsAccountId>`      send a test push to one device (admin or self)
 //!
 //! `<account>` is either a numeric account id or an email address. Requests
 //! for the authenticated user's own account are allowed without admin
@@ -26,6 +27,7 @@ use http_proto::{HttpResponse, JsonResponse, ToHttpResponse};
 use hyper::Method;
 use registry::schema::enums::Permission;
 use serde::Serialize;
+use services::state_manager::apns::{ApnsClient, SendResult};
 use store::{
     Serialize as _, ValueKey,
     write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
@@ -56,18 +58,71 @@ pub struct XapsAccounts {
     pub accounts: Vec<XapsAccount>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TestResult {
+    pub status: &'static str,
+}
+
 pub async fn handle_xaps_api_request(
     server: &Server,
     path: &[&str],
     access_token: &AccessToken,
     method: &Method,
 ) -> trc::Result<HttpResponse> {
-    // Routes are under /api/xaps/registrations/...
-    if path.get(1).copied() != Some("registrations") {
-        return Err(trc::ResourceEvent::NotFound.into_err());
-    }
+    // Routes are under /api/xaps/registrations/... and /api/xaps/test/...
+    if method == Method::POST && path.get(1).copied() == Some("test") {
+        // POST /api/xaps/test/<account>/<apsAccountId> — send a test push.
+        let Some(account) = path.get(2).copied() else {
+            return Err(trc::ResourceEvent::NotFound.into_err());
+        };
+        let Some(device_id) = path.get(3).copied() else {
+            return Err(trc::ResourceEvent::NotFound.into_err());
+        };
+        let account_id = resolve_account_id(server, account).await?;
+        assert_self_or_admin(access_token, account_id, Permission::SysAccountUpdate)?;
 
-    if method == Method::GET {
+        // The device must be registered for this account.
+        let registrations = load_xaps_registrations(server, account_id)
+            .await
+            .caused_by(trc::location!())?;
+        let Some(registration) = registrations
+            .into_iter()
+            .find(|r| r.aps_account_id == device_id)
+        else {
+            return Err(trc::ResourceEvent::NotFound.into_err());
+        };
+
+        // Report a broken configuration so the UI can surface it.
+        let Some(apns) = ApnsClient::try_new(&server.core.xaps) else {
+            return Ok(JsonResponse::new(TestResult {
+                status: "not-configured",
+            })
+            .into_http_response());
+        };
+
+        match apns
+            .send_test_notification(&registration.device_token, &registration.aps_account_id)
+            .await
+        {
+            SendResult::Ok => Ok(JsonResponse::new(TestResult { status: "ok" }).into_http_response()),
+            SendResult::DeviceTokenInactive => {
+                // The device is no longer valid, remove its registration.
+                let _ = delete_xaps_registrations(server, account_id, Some(device_id))
+                    .await
+                    .caused_by(trc::location!())?;
+                Ok(JsonResponse::new(TestResult {
+                    status: "device-inactive",
+                })
+                .into_http_response())
+            }
+            SendResult::Error => Ok(JsonResponse::new(TestResult {
+                status: "error",
+            })
+            .into_http_response()),
+        }
+    } else if path.get(1).copied() != Some("registrations") {
+        Err(trc::ResourceEvent::NotFound.into_err())
+    } else if method == Method::GET {
         match path.get(2).copied() {
             // List all accounts with registered devices (admin only).
             None => {

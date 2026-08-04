@@ -38,9 +38,12 @@ impl<T: SessionStream> Session<T> {
                 .with_tag(request.tag)
                 .serialize(
                     Response {
-                        capabilities: Capability::all_capabilities(
-                            self.state.is_authenticated(),
-                            !self.is_tls && self.instance.acceptor.is_tls(),
+                        capabilities: crate::filter_xaps_capability(
+                            Capability::all_capabilities(
+                                self.state.is_authenticated(),
+                                !self.is_tls && self.instance.acceptor.is_tls(),
+                            ),
+                            self.xaps_ready(),
                         ),
                     }
                     .serialize(),

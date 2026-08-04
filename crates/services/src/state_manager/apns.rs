@@ -229,23 +229,58 @@ impl ApnsClient {
     }
 
     pub async fn send_notification(&self, device_token: &str, account_id: &str) -> SendResult {
+        self.send(
+            device_token,
+            account_id,
+            serde_json::json!({ "aps": { "account-id": account_id } }),
+            "background",
+            "5",
+        )
+        .await
+    }
+
+    /// Sends a visible (alert) test notification to a device, used by the
+    /// admin console to verify that push delivery is working.
+    pub async fn send_test_notification(&self, device_token: &str, account_id: &str) -> SendResult {
+        self.send(
+            device_token,
+            account_id,
+            serde_json::json!({
+                "aps": {
+                    "alert": { "title": "Stalwart", "body": "XAPS test push" },
+                    "account-id": account_id,
+                }
+            }),
+            "alert",
+            "10",
+        )
+        .await
+    }
+
+    async fn send(
+        &self,
+        device_token: &str,
+        account_id: &str,
+        payload: serde_json::Value,
+        push_type: &str,
+        priority: &str,
+    ) -> SendResult {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        let payload = serde_json::json!({ "aps": { "account-id": account_id } }).to_string();
 
         let mut request = self
             .http_client
             .post(format!("{}/3/device/{}", self.host, device_token))
             .header("apns-topic", self.topic.as_str())
-            .header("apns-push-type", "background")
-            .header("apns-priority", "5")
+            .header("apns-push-type", push_type)
+            .header("apns-priority", priority)
             .header("apns-expiration", (now + APNS_EXPIRATION_SECS).to_string());
         if let Some(token) = self.token(now) {
             request = request.bearer_auth(token);
         }
 
-        match request.body(payload).send().await {
+        match request.body(payload.to_string()).send().await {
             Ok(response) => {
                 let status = response.status();
                 if status.is_success() {

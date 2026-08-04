@@ -38,8 +38,9 @@ impl<T: SessionStream> Session<T> {
 
         let arguments = request.parse_xapple_push_service()?;
 
-        // The extension is only functional when XAPS is enabled.
-        if !self.server.core.xaps.enabled {
+        // The extension is only functional when XAPS is enabled and fully
+        // configured.
+        if !self.xaps_ready() {
             return Err(trc::ImapEvent::Error
                 .into_err()
                 .details("XAPPLEPUSHSERVICE is not enabled.")
