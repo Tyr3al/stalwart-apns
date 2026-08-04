@@ -395,6 +395,10 @@ impl EventType {
             b"push-subscription.success" => EventType::PushSubscription(PushSubscriptionEvent::Success),
             b"push-subscription.error" => EventType::PushSubscription(PushSubscriptionEvent::Error),
             b"push-subscription.not-found" => EventType::PushSubscription(PushSubscriptionEvent::NotFound),
+            b"xaps.success" => EventType::Xaps(XapsEvent::Success),
+            b"xaps.scheduled" => EventType::Xaps(XapsEvent::Scheduled),
+            b"xaps.error" => EventType::Xaps(XapsEvent::Error),
+            b"xaps.device-token-inactive" => EventType::Xaps(XapsEvent::DeviceTokenInactive),
             b"queue.started" => EventType::Queue(QueueEvent::Started),
             b"queue.message-queued" => EventType::Queue(QueueEvent::MessageQueued),
             b"queue.authenticated-message-queued" => EventType::Queue(QueueEvent::AuthenticatedMessageQueued),
@@ -1139,6 +1143,10 @@ impl EventType {
             EventType::PushSubscription(PushSubscriptionEvent::NotFound) => {
                 "push-subscription.not-found"
             }
+            EventType::Xaps(XapsEvent::Success) => "xaps.success",
+            EventType::Xaps(XapsEvent::Scheduled) => "xaps.scheduled",
+            EventType::Xaps(XapsEvent::Error) => "xaps.error",
+            EventType::Xaps(XapsEvent::DeviceTokenInactive) => "xaps.device-token-inactive",
             EventType::Queue(QueueEvent::Started) => "queue.started",
             EventType::Queue(QueueEvent::MessageQueued) => "queue.message-queued",
             EventType::Queue(QueueEvent::AuthenticatedMessageQueued) => {
@@ -1810,6 +1818,10 @@ impl EventType {
             EventType::PushSubscription(PushSubscriptionEvent::Success) => 373,
             EventType::PushSubscription(PushSubscriptionEvent::Error) => 371,
             EventType::PushSubscription(PushSubscriptionEvent::NotFound) => 372,
+            EventType::Xaps(XapsEvent::Success) => 634,
+            EventType::Xaps(XapsEvent::Scheduled) => 635,
+            EventType::Xaps(XapsEvent::Error) => 636,
+            EventType::Xaps(XapsEvent::DeviceTokenInactive) => 637,
             EventType::Queue(QueueEvent::Started) => 390,
             EventType::Queue(QueueEvent::MessageQueued) => 380,
             EventType::Queue(QueueEvent::AuthenticatedMessageQueued) => 381,
@@ -2487,6 +2499,10 @@ impl EventType {
             373 => Some(EventType::PushSubscription(PushSubscriptionEvent::Success)),
             371 => Some(EventType::PushSubscription(PushSubscriptionEvent::Error)),
             372 => Some(EventType::PushSubscription(PushSubscriptionEvent::NotFound)),
+            634 => Some(EventType::Xaps(XapsEvent::Success)),
+            635 => Some(EventType::Xaps(XapsEvent::Scheduled)),
+            636 => Some(EventType::Xaps(XapsEvent::Error)),
+            637 => Some(EventType::Xaps(XapsEvent::DeviceTokenInactive)),
             390 => Some(EventType::Queue(QueueEvent::Started)),
             380 => Some(EventType::Queue(QueueEvent::MessageQueued)),
             381 => Some(EventType::Queue(QueueEvent::AuthenticatedMessageQueued)),
@@ -2775,6 +2791,8 @@ impl EventType {
             EventType::Server(ServerEvent::StartupError) => Level::Error,
             EventType::Server(ServerEvent::ThreadError) => Level::Error,
             EventType::Sieve(SieveEvent::UnexpectedError) => Level::Error,
+            EventType::Xaps(XapsEvent::Error) => Level::Error,
+            EventType::Xaps(XapsEvent::DeviceTokenInactive) => Level::Error,
             EventType::Store(StoreEvent::AssertValueFailed) => Level::Error,
             EventType::Store(StoreEvent::FoundationdbError) => Level::Error,
             EventType::Store(StoreEvent::MysqlError) => Level::Error,
@@ -3029,6 +3047,8 @@ impl EventType {
             EventType::Pop3(Pop3Event::RawInput) => Level::Trace,
             EventType::Pop3(Pop3Event::RawOutput) => Level::Trace,
             EventType::PushSubscription(PushSubscriptionEvent::Success) => Level::Trace,
+            EventType::Xaps(XapsEvent::Success) => Level::Trace,
+            EventType::Xaps(XapsEvent::Scheduled) => Level::Trace,
             EventType::Smtp(SmtpEvent::RawInput) => Level::Trace,
             EventType::Smtp(SmtpEvent::RawOutput) => Level::Trace,
             EventType::Store(StoreEvent::DataWrite) => Level::Trace,
@@ -3593,6 +3613,12 @@ impl EventType {
             EventType::PushSubscription(PushSubscriptionEvent::Error) => "Push subscription error",
             EventType::PushSubscription(PushSubscriptionEvent::NotFound) => {
                 "Push subscription not found"
+            }
+            EventType::Xaps(XapsEvent::Success) => "APNs notification sent",
+            EventType::Xaps(XapsEvent::Scheduled) => "XAPS delayed notification scheduled",
+            EventType::Xaps(XapsEvent::Error) => "APNs notification failed",
+            EventType::Xaps(XapsEvent::DeviceTokenInactive) => {
+                "APNs device token is no longer active"
             }
             EventType::Queue(QueueEvent::Started) => "MTA queue started",
             EventType::Queue(QueueEvent::MessageQueued) => "Queued message for delivery",
@@ -4546,6 +4572,10 @@ impl EventType {
             EventType::PushSubscription(PushSubscriptionEvent::Success),
             EventType::PushSubscription(PushSubscriptionEvent::Error),
             EventType::PushSubscription(PushSubscriptionEvent::NotFound),
+            EventType::Xaps(XapsEvent::Success),
+            EventType::Xaps(XapsEvent::Scheduled),
+            EventType::Xaps(XapsEvent::Error),
+            EventType::Xaps(XapsEvent::DeviceTokenInactive),
             EventType::Queue(QueueEvent::Started),
             EventType::Queue(QueueEvent::MessageQueued),
             EventType::Queue(QueueEvent::AuthenticatedMessageQueued),

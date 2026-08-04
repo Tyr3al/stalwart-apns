@@ -31,7 +31,7 @@ use store::{
     write::{AlignedBytes, Archive, now},
 };
 use tokio::sync::mpsc;
-use trc::{AddContext, PushSubscriptionEvent, ServerEvent};
+use trc::{AddContext, PushSubscriptionEvent, ServerEvent, XapsEvent};
 use types::{collection::Collection, field::PrincipalField, id::Id};
 #[cfg(feature = "xaps")]
 use types::type_state::DataType;
@@ -472,12 +472,14 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                                 match load_xaps_registrations(&server, account_id).await {
                                     Ok(Some(registrations)) => {
                                         let due = now() + server.core.xaps.delay;
+                                        let mut scheduled = false;
                                         for registration in registrations.registrations {
                                             if registration
                                                 .mailboxes
                                                 .iter()
                                                 .any(|m| m.eq_ignore_ascii_case("INBOX"))
                                             {
+                                                scheduled = true;
                                                 let _ = xaps_delayed_tx
                                                     .send(XapsDelayedEvent::Schedule {
                                                         key: XapsDeviceKey {
@@ -488,9 +490,19 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                                                                 registration.device_token,
                                                         },
                                                         due,
+                                                        attempts: 0,
                                                     })
                                                     .await;
                                             }
+                                        }
+                                        if scheduled {
+                                            trc::event!(
+                                                Xaps(XapsEvent::Scheduled),
+                                                Details = format!(
+                                                    "Delayed XAPS notification scheduled for \
+                                                     account {account_id}"
+                                                ),
+                                            );
                                         }
                                     }
                                     Err(err) => {

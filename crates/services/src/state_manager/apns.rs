@@ -29,7 +29,7 @@ use store::{
     write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
 };
 use tokio::sync::mpsc;
-use trc::{AddContext, PushSubscriptionEvent};
+use trc::{AddContext, XapsEvent};
 use types::{collection::Collection, field::PrincipalField};
 
 const APNS_PRODUCTION_HOST: &str = "https://api.push.apple.com";
@@ -172,19 +172,19 @@ impl ApnsClient {
                 let status = response.status();
                 if status.is_success() {
                     trc::event!(
-                        PushSubscription(PushSubscriptionEvent::Success),
+                        Xaps(XapsEvent::Success),
                         Details = format!("APNs notification sent for account {account_id}"),
                     );
                     SendResult::Ok
                 } else if status == reqwest::StatusCode::GONE {
                     trc::event!(
-                        PushSubscription(PushSubscriptionEvent::NotFound),
+                        Xaps(XapsEvent::DeviceTokenInactive),
                         Details = format!("APNs device token is no longer active for account {account_id}"),
                     );
                     SendResult::DeviceTokenInactive
                 } else {
                     trc::event!(
-                        PushSubscription(PushSubscriptionEvent::Error),
+                        Xaps(XapsEvent::Error),
                         Details = format!("APNs request failed for account {account_id}"),
                         Code = status.as_u16(),
                     );
@@ -193,7 +193,7 @@ impl ApnsClient {
             }
             Err(err) => {
                 trc::event!(
-                    PushSubscription(PushSubscriptionEvent::Error),
+                    Xaps(XapsEvent::Error),
                     Details = format!("APNs request failed for account {account_id}"),
                     Reason = err.to_string(),
                 );
@@ -252,31 +252,50 @@ pub async fn deliver_xaps_notifications(
 
     for registration in registrations.registrations {
         if registration.mailboxes.iter().any(|m| m.eq_ignore_ascii_case("INBOX")) {
-            let send_result = apns
+            let key = XapsDeviceKey {
+                account_id: email_push.account_id,
+                aps_account_id: registration.aps_account_id.clone(),
+                device_token: registration.device_token.clone(),
+            };
+            match apns
                 .send_notification(&registration.device_token, &registration.aps_account_id)
-                .await;
-
-            // The immediate push supersedes any pending delayed notification
-            // for this device.
-            if let Some(xaps_delayed_tx) = &xaps_delayed_tx {
-                let _ = xaps_delayed_tx
-                    .send(XapsDelayedEvent::Remove {
-                        key: XapsDeviceKey {
-                            account_id: email_push.account_id,
-                            aps_account_id: registration.aps_account_id.clone(),
-                            device_token: registration.device_token.clone(),
-                        },
-                    })
+                .await
+            {
+                SendResult::Ok => {
+                    // The immediate push supersedes any pending delayed
+                    // notification for this device.
+                    if let Some(xaps_delayed_tx) = &xaps_delayed_tx {
+                        let _ = xaps_delayed_tx
+                            .send(XapsDelayedEvent::Remove { key })
+                            .await;
+                    }
+                }
+                SendResult::DeviceTokenInactive => {
+                    if let Some(xaps_delayed_tx) = &xaps_delayed_tx {
+                        let _ = xaps_delayed_tx
+                            .send(XapsDelayedEvent::Remove { key })
+                            .await;
+                    }
+                    delete_xaps_registration(
+                        &server,
+                        email_push.account_id,
+                        &registration.aps_account_id,
+                    )
                     .await;
-            }
-
-            if let SendResult::DeviceTokenInactive = send_result {
-                delete_xaps_registration(
-                    &server,
-                    email_push.account_id,
-                    &registration.aps_account_id,
-                )
-                .await;
+                }
+                SendResult::Error => {
+                    // Retry the transient failure with exponential backoff via
+                    // the delayed-notification task.
+                    if let Some(xaps_delayed_tx) = &xaps_delayed_tx {
+                        let _ = xaps_delayed_tx
+                            .send(XapsDelayedEvent::Schedule {
+                                key,
+                                due: now() + retry_delay(1),
+                                attempts: 1,
+                            })
+                            .await;
+                    }
+                }
             }
         }
     }
@@ -373,10 +392,33 @@ pub struct XapsDeviceKey {
 #[derive(Debug)]
 pub enum XapsDelayedEvent {
     /// (Re)schedule a delayed notification for a device, due at the given
-    /// unix timestamp.
-    Schedule { key: XapsDeviceKey, due: u64 },
+    /// unix timestamp, after `attempts` previous failed send attempts.
+    Schedule {
+        key: XapsDeviceKey,
+        due: u64,
+        attempts: u32,
+    },
     /// Cancel a pending delayed notification (e.g. after an immediate push).
     Remove { key: XapsDeviceKey },
+}
+
+/// Base delay in seconds for the first retry after a transient APNs failure.
+const XAPS_RETRY_BASE_DELAY_SECS: u64 = 60;
+/// Maximum APNs send attempts (initial + retries) before a notification is
+/// dropped.
+const XAPS_MAX_ATTEMPTS: u32 = 5;
+
+/// Exponential backoff delay (seconds) for the given 1-based attempt number,
+/// capped at one hour.
+fn retry_delay(attempt: u32) -> u64 {
+    let shift = attempt.saturating_sub(1).min(6);
+    (XAPS_RETRY_BASE_DELAY_SECS << shift).min(60 * 60)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DelayedEntry {
+    due: u64,
+    attempts: u32,
 }
 
 /// Spawns the delayed-notification task, mirroring the `delayedApns` map of
@@ -385,7 +427,7 @@ pub enum XapsDelayedEvent {
 /// seconds.
 pub fn spawn_xaps_delayed(inner: Arc<Inner>, mut rx: mpsc::Receiver<XapsDelayedEvent>) {
     tokio::spawn(async move {
-        let mut delayed: AHashMap<XapsDeviceKey, u64> = AHashMap::default();
+        let mut delayed: AHashMap<XapsDeviceKey, DelayedEntry> = AHashMap::default();
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         // Consume the immediate first tick so the first check waits a full
         // interval.
@@ -407,18 +449,55 @@ pub fn spawn_xaps_delayed(inner: Arc<Inner>, mut rx: mpsc::Receiver<XapsDelayedE
                         if !due.is_empty() {
                             let apns = ApnsClient::try_new(&server.core.xaps);
                             for key in due {
-                                delayed.remove(&key);
-                                if let Some(apns) = &apns
-                                    && let SendResult::DeviceTokenInactive = apns
+                                let Some(entry) = delayed.remove(&key) else {
+                                    continue;
+                                };
+                                let account_id = key.account_id;
+                                if let Some(apns) = &apns {
+                                    match apns
                                         .send_notification(&key.device_token, &key.aps_account_id)
                                         .await
-                                {
-                                    delete_xaps_registration(
-                                        &server,
-                                        key.account_id,
-                                        &key.aps_account_id,
-                                    )
-                                    .await;
+                                    {
+                                        SendResult::Ok => {}
+                                        SendResult::DeviceTokenInactive => {
+                                            delete_xaps_registration(
+                                                &server,
+                                                account_id,
+                                                &key.aps_account_id,
+                                            )
+                                            .await;
+                                        }
+                                        SendResult::Error => {
+                                            // Retry transient failures with exponential
+                                            // backoff, dropping the notification once the
+                                            // attempt limit is reached.
+                                            if entry.attempts + 1 < XAPS_MAX_ATTEMPTS {
+                                                let attempts = entry.attempts + 1;
+                                                delayed.insert(
+                                                    key,
+                                                    DelayedEntry {
+                                                        due: now() + retry_delay(attempts),
+                                                        attempts,
+                                                    },
+                                                );
+                                                trc::event!(
+                                                    Xaps(XapsEvent::Error),
+                                                    Details = format!(
+                                                        "APNs notification retry scheduled for \
+                                                         account {account_id} (attempt {attempts})"
+                                                    ),
+                                                );
+                                            } else {
+                                                trc::event!(
+                                                    Xaps(XapsEvent::Error),
+                                                    Details = format!(
+                                                        "APNs notification dropped for account \
+                                                         {account_id} after max attempts"
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -426,8 +505,8 @@ pub fn spawn_xaps_delayed(inner: Arc<Inner>, mut rx: mpsc::Receiver<XapsDelayedE
                 }
                 event = rx.recv() => {
                     match event {
-                        Some(XapsDelayedEvent::Schedule { key, due }) => {
-                            delayed.insert(key, due);
+                        Some(XapsDelayedEvent::Schedule { key, due, attempts }) => {
+                            delayed.insert(key, DelayedEntry { due, attempts });
                         }
                         Some(XapsDelayedEvent::Remove { key }) => {
                             delayed.remove(&key);
@@ -435,17 +514,21 @@ pub fn spawn_xaps_delayed(inner: Arc<Inner>, mut rx: mpsc::Receiver<XapsDelayedE
                         None => break,
                     }
                 }
-            }        }
+            }
+        }
     });
 }
 
 /// Collects the keys of delayed notifications whose due time has passed.
 /// Notifications are re-scheduled by overwriting their entry, so each device
 /// appears at most once.
-fn collect_due(delayed: &AHashMap<XapsDeviceKey, u64>, current_time: u64) -> Vec<XapsDeviceKey> {
+fn collect_due(
+    delayed: &AHashMap<XapsDeviceKey, DelayedEntry>,
+    current_time: u64,
+) -> Vec<XapsDeviceKey> {
     delayed
         .iter()
-        .filter(|(_, due_at)| current_time >= **due_at)
+        .filter(|(_, entry)| current_time >= entry.due)
         .map(|(key, _)| key.clone())
         .collect()
 }
@@ -528,22 +611,35 @@ mod tests {
             aps_account_id: id.to_string(),
             device_token: format!("token-{id}"),
         };
+        let entry = |due| DelayedEntry { due, attempts: 0 };
         let mut delayed = AHashMap::default();
-        delayed.insert(key("a"), 100);
-        delayed.insert(key("b"), 200);
-        delayed.insert(key("c"), 300);
+        delayed.insert(key("a"), entry(100));
+        delayed.insert(key("b"), entry(200));
+        delayed.insert(key("c"), entry(300));
 
         // Only entries due at or before the current time are collected.
         assert_eq!(collect_due(&delayed, 150), vec![key("a")]);
         assert_eq!(collect_due(&delayed, 200).len(), 2);
 
         // Re-scheduling overwrites the entry (dedup).
-        delayed.insert(key("a"), 500);
+        delayed.insert(key("a"), entry(500));
         assert!(collect_due(&delayed, 150).is_empty());
 
         // Removing an entry cancels it.
         delayed.remove(&key("a"));
         assert!(!delayed.contains_key(&key("a")));
+    }
+
+    #[test]
+    fn retry_backoff() {
+        // Exponential backoff, capped at one hour.
+        assert_eq!(retry_delay(1), 60);
+        assert_eq!(retry_delay(2), 120);
+        assert_eq!(retry_delay(3), 240);
+        assert_eq!(retry_delay(4), 480);
+        assert_eq!(retry_delay(6), 1920);
+        assert_eq!(retry_delay(7), 60 * 60);
+        assert_eq!(retry_delay(100), 60 * 60);
     }
 
     #[test]

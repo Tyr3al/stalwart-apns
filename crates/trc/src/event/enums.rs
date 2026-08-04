@@ -6,7 +6,7 @@
 
 // This file is auto-generated. Do not edit directly.
 
-pub const TOTAL_EVENT_COUNT: usize = 634;
+pub const TOTAL_EVENT_COUNT: usize = 638;
 pub const TOTAL_METRIC_COUNT: usize = 367;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -54,6 +54,7 @@ pub enum EventType {
     Tls(TlsEvent),
     TlsRpt(TlsRptEvent),
     WebDav(WebDavEvent),
+    Xaps(XapsEvent),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -575,6 +576,15 @@ pub enum PushSubscriptionEvent {
     Success = 373,
     Error = 371,
     NotFound = 372,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u16)]
+pub enum XapsEvent {
+    Success = 634,
+    Scheduled = 635,
+    Error = 636,
+    DeviceTokenInactive = 637,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

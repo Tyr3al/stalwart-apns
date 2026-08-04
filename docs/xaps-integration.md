@@ -196,8 +196,13 @@ Design notes (Phase 2):
 Remaining (out of scope / external):
 - P12 cert auth (would need an additional PFX-parsing dependency; PEM and token auth cover both modern and
   legacy certificate flows).
-- Dedicated `trc` event types for XAPS (currently reuses `PushSubscriptionEvent`).
 - Live multi-node verification and a mock-APNs end-to-end test harness (needs an Apple push certificate).
+
+Follow-ups already landed after Phase 3:
+- Dedicated `trc` `XapsEvent` type (Success/Scheduled/Error/DeviceTokenInactive, ids 634-637) replacing
+  `PushSubscriptionEvent` reuse; `TOTAL_EVENT_COUNT` bumped to 638; error events log at `Level::Error`.
+- APNs retry/backoff for transient failures: immediate and delayed sends retry with exponential backoff
+  (60s base, capped at 1h) up to `XAPS_MAX_ATTEMPTS = 5` total attempts, then drop with an error event.
 
 ## Alternatives & risks
 
