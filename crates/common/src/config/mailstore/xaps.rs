@@ -15,14 +15,23 @@ pub struct XapsConfig {
     /// APNs topic returned to clients in the XAPPLEPUSHSERVICE reply, must
     /// match the topic of the configured APNs credentials.
     pub topic: Option<String>,
-    /// Contents of the APNs authentication key (P8), PKCS#8 PEM encoded.
+    /// Contents of the APNs authentication key (P8), PKCS#8 PEM encoded
+    /// (token-based authentication).
     pub key_file_p8: Option<String>,
     /// Key ID of the APNs authentication key.
     pub key_id: Option<String>,
     /// Team ID of the Apple developer account.
     pub team_id: Option<String>,
+    /// Client certificate (PEM) for certificate-based authentication.
+    pub certificate_file_pem: Option<String>,
+    /// Private key (PEM) for certificate-based authentication.
+    pub certificate_file_pem_key: Option<String>,
     /// Use the APNs sandbox endpoint.
     pub sandbox: bool,
+    /// Delay in seconds before non-new-message notifications are sent.
+    pub delay: u64,
+    /// Interval in seconds between checks for due delayed notifications.
+    pub check_interval: u64,
 }
 
 impl XapsConfig {
@@ -40,9 +49,34 @@ impl XapsConfig {
             })
             .unwrap_or_default()
             .map(|k| k.into_owned());
+        let certificate_file_pem = xaps
+            .certificate_file_pem
+            .secret()
+            .await
+            .map_err(|err| {
+                bp.build_error(
+                    ObjectType::Xaps.singleton(),
+                    format!("Unable to retrieve XAPS certificate: {err}"),
+                );
+            })
+            .unwrap_or_default()
+            .map(|k| k.into_owned());
+        let certificate_file_pem_key = xaps
+            .certificate_file_pem_key
+            .secret()
+            .await
+            .map_err(|err| {
+                bp.build_error(
+                    ObjectType::Xaps.singleton(),
+                    format!("Unable to retrieve XAPS certificate key: {err}"),
+                );
+            })
+            .unwrap_or_default()
+            .map(|k| k.into_owned());
 
-        // When XAPS is enabled, all APNs credentials are required, otherwise
-        // devices would register but never receive push notifications.
+        // When XAPS is enabled, the APNs topic and one authentication method
+        // (token or certificate) are required, otherwise devices would
+        // register but never receive push notifications.
         if xaps.enabled {
             if xaps.topic.as_deref().is_none_or(str::is_empty) {
                 bp.build_error(
@@ -50,22 +84,26 @@ impl XapsConfig {
                     "XAPS is enabled but no APNs topic is configured.",
                 );
             }
-            if key_file_p8.as_deref().is_none_or(str::is_empty) {
+            let has_token_auth = key_file_p8.as_deref().is_some_and(|k| !k.is_empty());
+            let has_cert_auth =
+                certificate_file_pem.as_deref().is_some_and(|c| !c.is_empty())
+                    && certificate_file_pem_key
+                        .as_deref()
+                        .is_some_and(|k| !k.is_empty());
+            if !has_token_auth && !has_cert_auth {
                 bp.build_error(
                     ObjectType::Xaps.singleton(),
-                    "XAPS is enabled but no APNs authentication key (keyFileP8) is configured.",
+                    "XAPS is enabled but neither APNs token (keyFileP8, keyId, teamId) nor \
+                     certificate (certificateFilePem, certificateFilePemKey) authentication \
+                     is configured.",
                 );
             }
-            if xaps.key_id.as_deref().is_none_or(str::is_empty) {
+            if has_token_auth && (xaps.key_id.as_deref().is_none_or(str::is_empty)
+                || xaps.team_id.as_deref().is_none_or(str::is_empty))
+            {
                 bp.build_error(
                     ObjectType::Xaps.singleton(),
-                    "XAPS is enabled but no APNs key ID is configured.",
-                );
-            }
-            if xaps.team_id.as_deref().is_none_or(str::is_empty) {
-                bp.build_error(
-                    ObjectType::Xaps.singleton(),
-                    "XAPS is enabled but no APNs team ID is configured.",
+                    "XAPS token authentication is configured but keyId and teamId are required.",
                 );
             }
         }
@@ -76,7 +114,11 @@ impl XapsConfig {
             key_file_p8,
             key_id: xaps.key_id,
             team_id: xaps.team_id,
+            certificate_file_pem,
+            certificate_file_pem_key,
             sandbox: xaps.sandbox,
+            delay: xaps.delay.max(1),
+            check_interval: xaps.check_interval.max(1),
         }
     }
 }

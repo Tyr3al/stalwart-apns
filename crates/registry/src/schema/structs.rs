@@ -6278,6 +6278,14 @@ pub struct Xaps {
     pub team_id: Option<String>,
     #[serde(rename = "sandbox")]
     pub sandbox: bool,
+    #[serde(rename = "delay")]
+    pub delay: u64,
+    #[serde(rename = "checkInterval")]
+    pub check_interval: u64,
+    #[serde(rename = "certificateFilePem")]
+    pub certificate_file_pem: SecretTextOptional,
+    #[serde(rename = "certificateFilePemKey")]
+    pub certificate_file_pem_key: SecretTextOptional,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

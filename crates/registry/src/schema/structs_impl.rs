@@ -47225,6 +47225,10 @@ impl Pickle for Xaps {
         self.key_id.pickle(out);
         self.team_id.pickle(out);
         self.sandbox.pickle(out);
+        self.delay.pickle(out);
+        self.check_interval.pickle(out);
+        self.certificate_file_pem.pickle(out);
+        self.certificate_file_pem_key.pickle(out);
     }
 
     fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
@@ -47235,6 +47239,10 @@ impl Pickle for Xaps {
         this.key_id = Pickle::unpickle(stream)?;
         this.team_id = Pickle::unpickle(stream)?;
         this.sandbox = Pickle::unpickle(stream)?;
+        this.delay = Pickle::unpickle(stream)?;
+        this.check_interval = Pickle::unpickle(stream)?;
+        this.certificate_file_pem = Pickle::unpickle(stream)?;
+        this.certificate_file_pem_key = Pickle::unpickle(stream)?;
         Some(this)
     }
 }
@@ -47248,19 +47256,33 @@ impl Default for Xaps {
             key_id: None,
             team_id: None,
             sandbox: false,
+            delay: 30,
+            check_interval: 20,
+            certificate_file_pem: Default::default(),
+            certificate_file_pem_key: Default::default(),
         }
     }
 }
 
 impl IntoValue for Xaps {
     fn into_value(self) -> JmapValue<'static> {
-        let mut map = jmap_tools::Map::with_capacity(6);
+        let mut map = jmap_tools::Map::with_capacity(10);
         map.insert_unchecked(Property::XapsEnabled, self.enabled.into_value());
         map.insert_unchecked(Property::XapsTopic, self.topic.into_value());
         map.insert_unchecked(Property::XapsKeyFileP8, self.key_file_p8.into_value());
         map.insert_unchecked(Property::XapsKeyId, self.key_id.into_value());
         map.insert_unchecked(Property::XapsTeamId, self.team_id.into_value());
         map.insert_unchecked(Property::XapsSandbox, self.sandbox.into_value());
+        map.insert_unchecked(Property::XapsDelay, self.delay.into_value());
+        map.insert_unchecked(Property::XapsCheckInterval, self.check_interval.into_value());
+        map.insert_unchecked(
+            Property::XapsCertificateFilePem,
+            self.certificate_file_pem.into_value(),
+        );
+        map.insert_unchecked(
+            Property::XapsCertificateFilePemKey,
+            self.certificate_file_pem_key.into_value(),
+        );
         JmapValue::Object(map)
     }
 }
@@ -47278,6 +47300,12 @@ impl RegistryJsonPropertyPatch for Xaps {
             Some(Property::XapsKeyId) => self.key_id.patch(pointer, value),
             Some(Property::XapsTeamId) => self.team_id.patch(pointer, value),
             Some(Property::XapsSandbox) => self.sandbox.patch(pointer, value),
+            Some(Property::XapsDelay) => self.delay.patch(pointer, value),
+            Some(Property::XapsCheckInterval) => self.check_interval.patch(pointer, value),
+            Some(Property::XapsCertificateFilePem) => self.certificate_file_pem.patch(pointer, value),
+            Some(Property::XapsCertificateFilePemKey) => {
+                self.certificate_file_pem_key.patch(pointer, value)
+            }
             Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
                 property: Property::Type,
                 value,

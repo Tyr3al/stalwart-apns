@@ -39,6 +39,7 @@ compact_str = "0.10.0"
 dns-update = { version = "0.5" }
 
 [dev-dependencies]
+rcgen = "0.14"
 
 [features]
 test_mode = []

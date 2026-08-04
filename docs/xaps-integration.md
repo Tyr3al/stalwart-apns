@@ -1,6 +1,6 @@
 # Integrating dovecot-xaps (iOS push email) into Stalwart
 
-Status: plan approved — Phase 1 ✅ and Phase 2 ✅ complete (IMAP `XAPPLEPUSHSERVICE` extension, registration store, config section, APNs sender, push-manager notify hook). Phase 3 (delay/throttle for non-`MessageNew` events, cert auth, telemetry) remains.
+Status: plan approved — Phases 1–3 ✅ complete (IMAP `XAPPLEPUSHSERVICE` extension, registration store, config section, APNs sender, push-manager notify hook, delayed-notification throttling, PEM cert auth). Remaining: P12 cert auth, dedicated trc event types, live multi-node verification.
 
 ## Background: what the original system does
 
@@ -159,11 +159,22 @@ Design notes (Phase 2):
 - Registration changes propagate cluster-wide via `PushServerUpdate { broadcast: true }`; delivery is
   shard-consistent (`jmap.push_total_shards` / `cluster_push_shard`), so exactly one node sends each push.
 
-**Phase 3 — fidelity & polish** (optional)
-1. Port the delay/throttle map for non-`MessageNew` events (move/copy/delete → delayed `{"aps":...}` to trigger
-   mailbox resync) — needs subscribing to `StateChange` events in addition to `EmailPush`.
-2. PEM/P12 cert auth; dev-vs-prod endpoint; retry/backoff; telemetry (`trc`) events.
-3. Multi-node verification (registrations in the shared store; APNs JWT per node is fine).
+**Phase 3 — fidelity & polish** ✅ done
+1. Delayed-notification throttling ported (the daemon's `delayedApns` map): non-delivery mailbox changes
+   (`StateChange` with `Email`/`Mailbox`/`Thread` types, excluding deliveries) schedule a batched push per
+   device, sent `delay` seconds later and checked every `checkInterval` — see `spawn_xaps_delayed` in
+   `apns.rs` and the `Event::Push` branch in `push.rs`. New-message pushes cancel pending entries for the
+   devices they reach (daemon parity).
+2. PEM client-certificate auth (`certificateFilePem` + `certificateFilePemKey`) as an alternative to token
+   auth; sandbox vs production endpoint already configurable. Config validation requires exactly one auth
+   method when enabled.
+3. `delay`/`checkInterval` config (defaults 30s/20s, same as `xapsd.yaml`) + admin-UI schema fields.
+
+Remaining (out of scope / external):
+- P12 cert auth (would need an additional PFX-parsing dependency; PEM and token auth cover both modern and
+  legacy certificate flows).
+- Dedicated `trc` event types for XAPS (currently reuses `PushSubscriptionEvent`).
+- Live multi-node verification and a mock-APNs end-to-end test harness (needs an Apple push certificate).
 
 ## Alternatives & risks
 

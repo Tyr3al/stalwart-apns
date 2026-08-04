@@ -4,7 +4,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use super::{Event, apns::{deliver_xaps_notifications, load_xaps_registrations}, http::http_request};
+use super::{
+    Event,
+    apns::{
+        XapsDelayedEvent, XapsDeviceKey, deliver_xaps_notifications, load_xaps_registrations,
+        spawn_xaps_delayed,
+    },
+    http::http_request,
+};
 use crate::state_manager::PushRegistration;
 use common::{
     BuildServer, IPC_CHANNEL_BUFFER, Inner, LONG_1Y_SLUMBER, Server,
@@ -24,11 +31,16 @@ use store::{
 };
 use tokio::sync::mpsc;
 use trc::{AddContext, PushSubscriptionEvent, ServerEvent};
-use types::{collection::Collection, field::PrincipalField, id::Id};
+use types::{collection::Collection, field::PrincipalField, id::Id, type_state::DataType};
 
 pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
     let (push_tx_, mut push_rx) = mpsc::channel::<Event>(IPC_CHANNEL_BUFFER);
     let push_tx = push_tx_.clone();
+
+    // Spawn the delayed XAPS notification task (dovecot-xaps-daemon's
+    // `delayedApns` map).
+    let (xaps_delayed_tx, xaps_delayed_rx) = mpsc::channel::<XapsDelayedEvent>(IPC_CHANNEL_BUFFER);
+    spawn_xaps_delayed(inner.clone(), xaps_delayed_rx);
 
     tokio::spawn(async move {
         let mut push_servers: AHashMap<Id, PushRegistration> = AHashMap::default();
@@ -412,7 +424,56 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                             tokio::spawn(deliver_xaps_notifications(
                                 inner.clone(),
                                 email_push.clone(),
+                                Some(xaps_delayed_tx.clone()),
                             ));
+                        }
+
+                        // Schedule delayed XAPS notifications for non-delivery
+                        // mailbox changes (e.g. message moves or flag changes),
+                        // mirroring the daemon's handling of non-MessageNew
+                        // events: they are batched and sent after a delay so
+                        // the device resyncs its mailboxes.
+                        if server.core.xaps.enabled
+                            && xaps_account_ids.contains(&account_id)
+                            && let PushNotification::StateChange(state_change) = &notification
+                            && state_change.types.contains_any(
+                                [
+                                    DataType::Email,
+                                    DataType::Mailbox,
+                                    DataType::Thread,
+                                ]
+                                .into_iter(),
+                            )
+                            && !state_change.types.contains(DataType::EmailDelivery)
+                        {
+                            match load_xaps_registrations(&server, account_id).await {
+                                Ok(Some(registrations)) => {
+                                    let due = now() + server.core.xaps.delay;
+                                    for registration in registrations.registrations {
+                                        if registration
+                                            .mailboxes
+                                            .iter()
+                                            .any(|m| m.eq_ignore_ascii_case("INBOX"))
+                                        {
+                                            let _ = xaps_delayed_tx
+                                                .send(XapsDelayedEvent::Schedule {
+                                                    key: XapsDeviceKey {
+                                                        account_id,
+                                                        aps_account_id: registration
+                                                            .aps_account_id,
+                                                        device_token: registration.device_token,
+                                                    },
+                                                    due,
+                                                })
+                                                .await;
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    trc::error!(err.caused_by(trc::location!()));
+                                }
+                                _ => {}
+                            }
                         }
 
                         if let Some(ids) = account_push_ids.get_mut(&account_id) {
