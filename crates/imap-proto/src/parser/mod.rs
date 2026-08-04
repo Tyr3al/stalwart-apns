@@ -24,6 +24,7 @@ pub mod status;
 pub mod store;
 pub mod subscribe;
 pub mod thread;
+#[cfg(feature = "xaps")]
 pub mod xapple;
 
 use std::{borrow::Cow, str::FromStr};
@@ -40,6 +41,11 @@ pub type Result<T> = std::result::Result<T, Cow<'static, str>>;
 
 impl CommandParser for Command {
     fn parse(value: &[u8], uid: bool) -> Option<Self> {
+        #[cfg(feature = "xaps")]
+        if value.eq_ignore_ascii_case(b"XAPPLEPUSHSERVICE") {
+            return Some(Command::XApplePushService);
+        }
+
         hashify::tiny_map!(value,
             "CAPABILITY" => Command::Capability,
             "NOOP" => Command::Noop,
@@ -82,7 +88,6 @@ impl CommandParser for Command {
             "GETQUOTA" => Command::GetQuota,
             "GETQUOTAROOT" => Command::GetQuotaRoot,
             "GETJMAPACCESS" => Command::GetJmapAccess,
-            "XAPPLEPUSHSERVICE" => Command::XApplePushService,
         )
     }
 

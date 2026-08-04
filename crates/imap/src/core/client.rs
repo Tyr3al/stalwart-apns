@@ -252,6 +252,7 @@ impl<T: SessionStream> Session<T> {
                     .handle_jmap_access(request)
                     .await
                     .map(|_| SessionResult::Continue),
+                #[cfg(feature = "xaps")]
                 Command::XApplePushService => self
                     .handle_xapple_push_service(request)
                     .await
@@ -365,6 +366,17 @@ impl<T: SessionStream> Session<T> {
                         .id(request.tag))
                 }
             }
+            #[cfg(feature = "xaps")]
+            Command::XApplePushService => {
+                if let State::Authenticated { .. } | State::Selected { .. } = state {
+                    Ok(request)
+                } else {
+                    Err(trc::ImapEvent::Error
+                        .into_err()
+                        .details("Not authenticated.")
+                        .id(request.tag))
+                }
+            }
             Command::Enable
             | Command::Select
             | Command::Examine
@@ -387,8 +399,7 @@ impl<T: SessionStream> Session<T> {
             | Command::Unauthenticate
             | Command::GetQuota
             | Command::GetQuotaRoot
-            | Command::GetJmapAccess
-            | Command::XApplePushService => {
+            | Command::GetJmapAccess => {
                 if let State::Authenticated { .. } | State::Selected { .. } = state {
                     Ok(request)
                 } else {

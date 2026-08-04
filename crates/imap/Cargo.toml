@@ -28,3 +28,4 @@ compact_str = "0.10.0"
 
 [features]
 test_mode = []
+xaps = ["imap_proto/xaps", "common/xaps", "email/xaps"]

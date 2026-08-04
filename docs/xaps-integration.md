@@ -2,6 +2,29 @@
 
 Status: plan approved — Phases 1–3 ✅ complete (IMAP `XAPPLEPUSHSERVICE` extension, registration store, config section, APNs sender, push-manager notify hook, delayed-notification throttling, PEM cert auth). Remaining: P12 cert auth, dedicated trc event types, live multi-node verification.
 
+## Building
+
+XAPS is an **optional cargo feature** (`xaps`), wired like the store backends (e.g. `redis`): the feature is
+declared per-crate (`imap_proto`, `imap`, `common`, `email`, `services`) and forwarded by the `stalwart` binary,
+and it is **not** part of the default features.
+
+```sh
+# without XAPS (default)
+cargo build --release
+
+# with XAPS
+cargo build --release --features xaps
+```
+
+`cargo test -p stalwart --features xaps` runs the XAPS unit tests (`apns.rs`, `parser/xapple.rs`).
+
+Notes:
+- The registry config section (`x:Xaps` singleton, `SysXaps*` permissions) and the `PrincipalField`/data-model
+  bits are always present — same as the redis store config being in the schema regardless of the `redis`
+  feature — but without the `xaps` feature the server has no `XAPPLEPUSHSERVICE` capability/command, no APNs
+  sender, and no XAPS config parsing.
+- Requires the `push_notifications` role at runtime (same as WebPush) and `xaps.enabled`.
+
 ## Background: what the original system does
 
 **`dovecot-xaps-plugin`** (C, two dovecot plugins):

@@ -44,3 +44,4 @@ rcgen = "0.14"
 [features]
 test_mode = []
 enterprise = []
+xaps = ["common/xaps", "email/xaps"]

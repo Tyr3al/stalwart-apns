@@ -10,6 +10,7 @@ pub mod http;
 pub mod manager;
 pub mod push;
 
+#[cfg(feature = "xaps")]
 pub mod apns;
 
 use common::ipc::PushNotification;

@@ -54,6 +54,7 @@ pub enum Capability {
     QuotaResource(QuotaResourceName),
     QuotaSet,
     JmapAccess,
+    #[cfg(feature = "xaps")]
     XApplePushService,
 }
 
@@ -122,6 +123,7 @@ impl Capability {
             }
             Capability::QuotaSet => b"QUOTA=SET",
             Capability::JmapAccess => b"JMAPACCESS",
+            #[cfg(feature = "xaps")]
             Capability::XApplePushService => b"XAPPLEPUSHSERVICE",
         });
     }
@@ -135,6 +137,7 @@ impl Capability {
             Capability::LiteralPlus,
             Capability::Id,
             Capability::Utf8Accept,
+            #[cfg(feature = "xaps")]
             Capability::XApplePushService,
         ];
 

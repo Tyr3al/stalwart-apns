@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
+#[cfg(feature = "xaps")]
 pub mod xaps;
 
 use jmap_proto::method::query::Filter;

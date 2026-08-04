@@ -80,6 +80,7 @@ pub enum Command {
     GetJmapAccess,
 
     // Apple Push Service (XAPPLEPUSHSERVICE)
+    #[cfg(feature = "xaps")]
     XApplePushService,
 }
 

@@ -12,9 +12,10 @@ use crate::{
     auth::oauth::config::OAuthConfig,
     config::mailstore::{
         email::EmailConfig, imap::ImapConfig, scripts::Scripting, spamfilter::SpamFilterConfig,
-        xaps::XapsConfig,
     },
 };
+#[cfg(feature = "xaps")]
+use crate::config::mailstore::xaps::XapsConfig;
 use arc_swap::ArcSwap;
 use groupware::GroupwareConfig;
 use hyper::HeaderMap;
@@ -91,6 +92,7 @@ impl Core {
             smtp: Box::pin(SmtpConfig::parse(bp)).await,
             jmap: JmapConfig::parse(bp).await,
             imap: ImapConfig::parse(bp).await,
+            #[cfg(feature = "xaps")]
             xaps: XapsConfig::parse(bp).await,
             oauth: OAuthConfig::parse(bp).await,
             metrics: Metrics::parse(bp).await,

@@ -9,6 +9,8 @@
 use crate::auth::{AccessTokenInner, EmailAddress};
 use crate::manager::application::WebApplications;
 use crate::network::asn::AsnGeoLookupData;
+#[cfg(feature = "xaps")]
+use crate::config::mailstore::xaps::XapsConfig;
 use crate::{
     auth::{AccountCache, DomainCache, EmailCache, MailingListCache, RoleCache, TenantCache},
     config::{
@@ -17,7 +19,6 @@ use crate::{
             imap::ImapConfig,
             scripts::Scripting,
             spamfilter::{IpResolver, SpamClassifier, SpamFilterConfig},
-            xaps::XapsConfig,
         },
         smtp::auth::DkimSigners,
     },
@@ -380,6 +381,7 @@ pub struct Core {
     pub email: EmailConfig,
     pub jmap: JmapConfig,
     pub imap: ImapConfig,
+    #[cfg(feature = "xaps")]
     pub xaps: XapsConfig,
     pub smtp: SmtpConfig,
     pub spam: SpamFilterConfig,

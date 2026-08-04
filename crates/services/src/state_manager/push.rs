@@ -6,11 +6,12 @@
 
 use super::{
     Event,
-    apns::{
-        XapsDelayedEvent, XapsDeviceKey, deliver_xaps_notifications, load_xaps_registrations,
-        spawn_xaps_delayed,
-    },
     http::http_request,
+};
+#[cfg(feature = "xaps")]
+use super::apns::{
+    XapsDelayedEvent, XapsDeviceKey, deliver_xaps_notifications, load_xaps_registrations,
+    spawn_xaps_delayed,
 };
 use crate::state_manager::PushRegistration;
 use common::{
@@ -31,7 +32,9 @@ use store::{
 };
 use tokio::sync::mpsc;
 use trc::{AddContext, PushSubscriptionEvent, ServerEvent};
-use types::{collection::Collection, field::PrincipalField, id::Id, type_state::DataType};
+use types::{collection::Collection, field::PrincipalField, id::Id};
+#[cfg(feature = "xaps")]
+use types::type_state::DataType;
 
 pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
     let (push_tx_, mut push_rx) = mpsc::channel::<Event>(IPC_CHANNEL_BUFFER);
@@ -39,12 +42,15 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
 
     // Spawn the delayed XAPS notification task (dovecot-xaps-daemon's
     // `delayedApns` map).
+    #[cfg(feature = "xaps")]
     let (xaps_delayed_tx, xaps_delayed_rx) = mpsc::channel::<XapsDelayedEvent>(IPC_CHANNEL_BUFFER);
+    #[cfg(feature = "xaps")]
     spawn_xaps_delayed(inner.clone(), xaps_delayed_rx);
 
     tokio::spawn(async move {
         let mut push_servers: AHashMap<Id, PushRegistration> = AHashMap::default();
         let mut account_push_ids: AHashMap<u32, AHashSet<Id>> = AHashMap::default();
+        #[cfg(feature = "xaps")]
         let mut xaps_account_ids: AHashSet<u32> = AHashSet::default();
         let mut last_verify: AHashMap<u32, Instant> = AHashMap::default();
         let mut last_retry = Instant::now();
@@ -114,44 +120,47 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                 }
 
                 // Load XAPS device registrations for this node's shard.
-                if server.core.xaps.enabled {
-                    match server
-                        .document_ids(
-                            u32::MAX,
-                            Collection::Principal,
-                            PrincipalField::XapsRegistrations,
-                        )
-                        .await
-                    {
-                        Ok(account_ids) => {
-                            for account_id in account_ids {
-                                if server.core.jmap.push_total_shards <= 1
-                                    || account_id % server.core.jmap.push_total_shards
-                                        == server.registry().cluster_push_shard()
-                                {
-                                    xaps_account_ids.insert(account_id);
+                #[cfg(feature = "xaps")]
+                {
+                    if server.core.xaps.enabled {
+                        match server
+                            .document_ids(
+                                u32::MAX,
+                                Collection::Principal,
+                                PrincipalField::XapsRegistrations,
+                            )
+                            .await
+                        {
+                            Ok(account_ids) => {
+                                for account_id in account_ids {
+                                    if server.core.jmap.push_total_shards <= 1
+                                        || account_id % server.core.jmap.push_total_shards
+                                            == server.registry().cluster_push_shard()
+                                    {
+                                        xaps_account_ids.insert(account_id);
+                                    }
                                 }
                             }
-                        }
-                        Err(err) => {
-                            trc::error!(err.caused_by(trc::location!()));
+                            Err(err) => {
+                                trc::error!(err.caused_by(trc::location!()));
+                            }
                         }
                     }
                 }
 
                 // Subscribe to push events
-                if (!account_push_ids.is_empty() || !xaps_account_ids.is_empty())
+                let mut activate_account_ids =
+                    account_push_ids.keys().copied().collect::<Vec<_>>();
+                #[cfg(feature = "xaps")]
+                activate_account_ids.extend(xaps_account_ids.iter().copied());
+                if !activate_account_ids.is_empty()
                     && server
                         .inner
                         .ipc
                         .push_tx
                         .clone()
                         .send(PushEvent::PushServerRegister {
-                            activate: account_push_ids
-                                .keys()
-                                .copied()
-                                .chain(xaps_account_ids.iter().copied())
-                                .collect(),
+                            activate: activate_account_ids,
                             expired: vec![],
                         })
                         .await
@@ -328,7 +337,12 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                                                 // Only unregister the account if it has no
                                                 // XAPS devices either, otherwise the shared
                                                 // router `is_push` flag would stop XAPS pushes.
-                                                if !xaps_account_ids.contains(account_id) {
+                                                #[cfg(feature = "xaps")]
+                                                let has_xaps_devices =
+                                                    xaps_account_ids.contains(account_id);
+                                                #[cfg(not(feature = "xaps"))]
+                                                let has_xaps_devices = false;
+                                                if !has_xaps_devices {
                                                     inactive_account_ids.push(*account_id);
                                                 }
                                             }
@@ -358,57 +372,63 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                         }
 
                         // Update XAPS device registrations for the account.
-                        if server.core.xaps.enabled {
-                            let has_xaps_registrations = match load_xaps_registrations(
-                                &server, account_id,
-                            )
-                            .await
-                            {
-                                Ok(registrations) => {
-                                    !registrations.is_none_or(|r| r.registrations.is_empty())
-                                }
-                                Err(err) => {
-                                    // Do not unregister on transient read failures.
-                                    trc::error!(err.caused_by(trc::location!()));
-                                    continue;
-                                }
-                            };
-                            let mut xaps_activate = Vec::new();
-                            let mut xaps_expired = Vec::new();
-                            match (xaps_account_ids.contains(&account_id), has_xaps_registrations) {
-                                (false, true) => {
-                                    xaps_account_ids.insert(account_id);
-                                    xaps_activate.push(account_id);
-                                }
-                                (true, false) => {
-                                    xaps_account_ids.remove(&account_id);
-                                    // Only unregister the account if it has no web push
-                                    // subscriptions either, otherwise the shared router
-                                    // `is_push` flag would stop web push deliveries.
-                                    if !account_push_ids.contains_key(&account_id) {
-                                        xaps_expired.push(account_id);
+                        #[cfg(feature = "xaps")]
+                        {
+                            if server.core.xaps.enabled {
+                                let has_xaps_registrations = match load_xaps_registrations(
+                                    &server, account_id,
+                                )
+                                .await
+                                {
+                                    Ok(registrations) => {
+                                        !registrations.is_none_or(|r| r.registrations.is_empty())
                                     }
+                                    Err(err) => {
+                                        // Do not unregister on transient read failures.
+                                        trc::error!(err.caused_by(trc::location!()));
+                                        continue;
+                                    }
+                                };
+                                let mut xaps_activate = Vec::new();
+                                let mut xaps_expired = Vec::new();
+                                match (
+                                    xaps_account_ids.contains(&account_id),
+                                    has_xaps_registrations,
+                                ) {
+                                    (false, true) => {
+                                        xaps_account_ids.insert(account_id);
+                                        xaps_activate.push(account_id);
+                                    }
+                                    (true, false) => {
+                                        xaps_account_ids.remove(&account_id);
+                                        // Only unregister the account if it has no web push
+                                        // subscriptions either, otherwise the shared router
+                                        // `is_push` flag would stop web push deliveries.
+                                        if !account_push_ids.contains_key(&account_id) {
+                                            xaps_expired.push(account_id);
+                                        }
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
-                            }
-                            if (!xaps_activate.is_empty() || !xaps_expired.is_empty())
-                                && server
-                                    .inner
-                                    .ipc
-                                    .push_tx
-                                    .clone()
-                                    .send(PushEvent::PushServerRegister {
-                                        activate: xaps_activate,
-                                        expired: xaps_expired,
-                                    })
-                                    .await
-                                    .is_err()
-                            {
-                                trc::event!(
-                                    Server(ServerEvent::ThreadError),
-                                    Details = "Error sending state change.",
-                                    CausedBy = trc::location!()
-                                );
+                                if (!xaps_activate.is_empty() || !xaps_expired.is_empty())
+                                    && server
+                                        .inner
+                                        .ipc
+                                        .push_tx
+                                        .clone()
+                                        .send(PushEvent::PushServerRegister {
+                                            activate: xaps_activate,
+                                            expired: xaps_expired,
+                                        })
+                                        .await
+                                        .is_err()
+                                {
+                                    trc::event!(
+                                        Server(ServerEvent::ThreadError),
+                                        Details = "Error sending state change.",
+                                        CausedBy = trc::location!()
+                                    );
+                                }
                             }
                         }
                     }
@@ -417,62 +437,67 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
 
                         // Deliver XAPS (Apple push) notifications for accounts
                         // with registered devices.
-                        if server.core.xaps.enabled
-                            && xaps_account_ids.contains(&account_id)
-                            && let PushNotification::EmailPush(email_push) = &notification
+                        #[cfg(feature = "xaps")]
                         {
-                            tokio::spawn(deliver_xaps_notifications(
-                                inner.clone(),
-                                email_push.clone(),
-                                Some(xaps_delayed_tx.clone()),
-                            ));
-                        }
+                            if server.core.xaps.enabled
+                                && xaps_account_ids.contains(&account_id)
+                                && let PushNotification::EmailPush(email_push) = &notification
+                            {
+                                tokio::spawn(deliver_xaps_notifications(
+                                    inner.clone(),
+                                    email_push.clone(),
+                                    Some(xaps_delayed_tx.clone()),
+                                ));
+                            }
 
-                        // Schedule delayed XAPS notifications for non-delivery
-                        // mailbox changes (e.g. message moves or flag changes),
-                        // mirroring the daemon's handling of non-MessageNew
-                        // events: they are batched and sent after a delay so
-                        // the device resyncs its mailboxes.
-                        if server.core.xaps.enabled
-                            && xaps_account_ids.contains(&account_id)
-                            && let PushNotification::StateChange(state_change) = &notification
-                            && state_change.types.contains_any(
-                                [
-                                    DataType::Email,
-                                    DataType::Mailbox,
-                                    DataType::Thread,
-                                ]
-                                .into_iter(),
-                            )
-                            && !state_change.types.contains(DataType::EmailDelivery)
-                        {
-                            match load_xaps_registrations(&server, account_id).await {
-                                Ok(Some(registrations)) => {
-                                    let due = now() + server.core.xaps.delay;
-                                    for registration in registrations.registrations {
-                                        if registration
-                                            .mailboxes
-                                            .iter()
-                                            .any(|m| m.eq_ignore_ascii_case("INBOX"))
-                                        {
-                                            let _ = xaps_delayed_tx
-                                                .send(XapsDelayedEvent::Schedule {
-                                                    key: XapsDeviceKey {
-                                                        account_id,
-                                                        aps_account_id: registration
-                                                            .aps_account_id,
-                                                        device_token: registration.device_token,
-                                                    },
-                                                    due,
-                                                })
-                                                .await;
+                            // Schedule delayed XAPS notifications for
+                            // non-delivery mailbox changes (e.g. message moves
+                            // or flag changes), mirroring the daemon's handling
+                            // of non-MessageNew events: they are batched and
+                            // sent after a delay so the device resyncs its
+                            // mailboxes.
+                            if server.core.xaps.enabled
+                                && xaps_account_ids.contains(&account_id)
+                                && let PushNotification::StateChange(state_change) = &notification
+                                && state_change.types.contains_any(
+                                    [
+                                        DataType::Email,
+                                        DataType::Mailbox,
+                                        DataType::Thread,
+                                    ]
+                                    .into_iter(),
+                                )
+                                && !state_change.types.contains(DataType::EmailDelivery)
+                            {
+                                match load_xaps_registrations(&server, account_id).await {
+                                    Ok(Some(registrations)) => {
+                                        let due = now() + server.core.xaps.delay;
+                                        for registration in registrations.registrations {
+                                            if registration
+                                                .mailboxes
+                                                .iter()
+                                                .any(|m| m.eq_ignore_ascii_case("INBOX"))
+                                            {
+                                                let _ = xaps_delayed_tx
+                                                    .send(XapsDelayedEvent::Schedule {
+                                                        key: XapsDeviceKey {
+                                                            account_id,
+                                                            aps_account_id: registration
+                                                                .aps_account_id,
+                                                            device_token:
+                                                                registration.device_token,
+                                                        },
+                                                        due,
+                                                    })
+                                                    .await;
+                                            }
                                         }
                                     }
+                                    Err(err) => {
+                                        trc::error!(err.caused_by(trc::location!()));
+                                    }
+                                    _ => {}
                                 }
-                                Err(err) => {
-                                    trc::error!(err.caused_by(trc::location!()));
-                                }
-                                _ => {}
                             }
                         }
 
@@ -559,6 +584,7 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                     Event::Reset => {
                         push_servers.clear();
                         account_push_ids.clear();
+                        #[cfg(feature = "xaps")]
                         xaps_account_ids.clear();
                     }
                     Event::DeliverySuccess { id } => {
