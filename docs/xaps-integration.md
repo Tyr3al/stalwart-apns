@@ -1,6 +1,6 @@
 # Integrating dovecot-xaps (iOS push email) into Stalwart
 
-Status: plan approved — Phases 1–3 ✅ complete (IMAP `XAPPLEPUSHSERVICE` extension, registration store, config section, APNs sender, push-manager notify hook, delayed-notification throttling, PEM cert auth). Remaining: P12 cert auth, dedicated trc event types, live multi-node verification.
+Status: plan approved — Phases 1–3 ✅ complete, plus all follow-ups (P12 auth, `trc` events, retry/backoff, devices API + self-service, test-push, capability guard, optional `xaps` cargo feature, webui pages, README fork notice).
 
 ## Building
 
@@ -193,8 +193,20 @@ Design notes (Phase 2):
    method when enabled.
 3. `delay`/`checkInterval` config (defaults 30s/20s, same as `xapsd.yaml`) + admin-UI schema fields.
 
-Remaining (out of scope / external):
-- Live multi-node verification and a mock-APNs end-to-end test harness (needs an Apple push certificate).
+Remaining (out of scope / external / needs the user):
+- Live end-to-end verification with a real Apple push certificate (macOS Server purchase or paid Developer
+  account) — the only untested part; everything else is unit-tested.
+- Multi-node/cluster verification (sharding/broadcast design is reasoned through, not run across nodes).
+- Mock-APNs end-to-end test harness (local HTTP/2 mock + real IMAP session).
+- Topic-from-certificate design decision (currently the `topic` config option is the source; deriving it
+  from the certificate subject UID is unimplemented).
+- P12 PBES2/AES support (would need the `openssl` dependency; legacy PBES1 only today, same as the Go daemon).
+- GitHub fork default branch (XAPS lives on `feature/xaps`; upstreaming to stalwartlabs is not planned).
+- Webui i18n is English-only (other locales fall back to the English defaults).
+
+Hardening applied (2026-08): test-push endpoint rate-limited (10/min/account, `KV_RATE_LIMIT_XAPS`),
+device tokens masked in API responses (`mask_token`), path segments percent-decoded server-side; the
+`not-configured` test status is returned only to the account owner or admins (accepted by design).
 
 Follow-ups already landed after Phase 3:
 - Dedicated `trc` `XapsEvent` type (Success/Scheduled/Error/DeviceTokenInactive, ids 634-637) replacing
@@ -213,8 +225,20 @@ Follow-ups already landed after Phase 3:
   `SysAccountUpdate` (delete); deletes mirror the push-manager cleanup (untag + clear, `PushServerUpdate`
   broadcast, `assert_value` against concurrent upserts) and stale registrations are pruned on read.
 
-Remaining (out of scope / external):
-- Live multi-node verification and a mock-APNs end-to-end test harness (needs an Apple push certificate).
+Remaining (out of scope / external / needs the user):
+- Live end-to-end verification with a real Apple push certificate (macOS Server purchase or paid Developer
+  account) — the only untested part; everything else is unit-tested.
+- Multi-node/cluster verification (sharding/broadcast design is reasoned through, not run across nodes).
+- Mock-APNs end-to-end test harness (local HTTP/2 mock + real IMAP session).
+- Topic-from-certificate design decision (currently the `topic` config option is the source; deriving it
+  from the certificate subject UID is unimplemented).
+- P12 PBES2/AES support (would need the `openssl` dependency; legacy PBES1 only today, same as the Go daemon).
+- GitHub fork default branch (XAPS lives on `feature/xaps`; upstreaming to stalwartlabs is not planned).
+- Webui i18n is English-only (other locales fall back to the English defaults).
+
+Hardening applied (2026-08): test-push endpoint rate-limited (10/min/account, `KV_RATE_LIMIT_XAPS`),
+device tokens masked in API responses (`mask_token`), path segments percent-decoded server-side; the
+`not-configured` test status is returned only to the account owner or admins (accepted by design).
 - Webadmin console UI for the device API (the UI lives in the separate stalwart-webadmin repo; the
   `camelCase` JSON contract is fixed by the `serialization_shape` test in `api/xaps.rs`).
 - Topic currently comes from the `topic` config option; deriving it from the certificate subject UID

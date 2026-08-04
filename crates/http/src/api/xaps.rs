@@ -19,20 +19,21 @@
 //! require `SysAccountGet` (list) / `SysAccountUpdate` (delete).
 
 use common::{
-    Server,
+    KV_RATE_LIMIT_XAPS, Server,
     auth::AccessToken,
     ipc::PushEvent,
 };
 use http_proto::{HttpResponse, JsonResponse, ToHttpResponse};
 use hyper::Method;
-use registry::schema::enums::Permission;
+use percent_encoding::percent_decode_str;
+use registry::schema::{enums::Permission, prelude::Duration, structs::Rate};
 use serde::Serialize;
 use services::state_manager::apns::{ApnsClient, SendResult};
 use store::{
     Serialize as _, ValueKey,
     write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
 };
-use trc::AddContext;
+use trc::{AddContext, LimitEvent};
 use types::{collection::Collection, field::PrincipalField};
 
 #[derive(Debug, Serialize)]
@@ -78,8 +79,32 @@ pub async fn handle_xaps_api_request(
         let Some(device_id) = path.get(3).copied() else {
             return Err(trc::ResourceEvent::NotFound.into_err());
         };
-        let account_id = resolve_account_id(server, account).await?;
+        let account = percent_decode_str(account)
+            .decode_utf8_lossy()
+            .into_owned();
+        let device_id = percent_decode_str(device_id)
+            .decode_utf8_lossy()
+            .into_owned();
+        let account_id = resolve_account_id(server, &account).await?;
         assert_self_or_admin(access_token, account_id, Permission::SysAccountUpdate)?;
+
+        // Limit test pushes to 10 per minute per account.
+        if server
+            .in_memory_store()
+            .is_rate_allowed(
+                KV_RATE_LIMIT_XAPS,
+                &account_id.to_be_bytes(),
+                &Rate {
+                    count: 10,
+                    period: Duration::from_millis(60_000),
+                },
+                false,
+            )
+            .await?
+            .is_some()
+        {
+            return Err(LimitEvent::TooManyRequests.into_err());
+        }
 
         // The device must be registered for this account.
         let registrations = load_xaps_registrations(server, account_id)
@@ -107,7 +132,7 @@ pub async fn handle_xaps_api_request(
             SendResult::Ok => Ok(JsonResponse::new(TestResult { status: "ok" }).into_http_response()),
             SendResult::DeviceTokenInactive => {
                 // The device is no longer valid, remove its registration.
-                let _ = delete_xaps_registrations(server, account_id, Some(device_id))
+                let _ = delete_xaps_registrations(server, account_id, Some(device_id.as_str()))
                     .await
                     .caused_by(trc::location!())?;
                 Ok(JsonResponse::new(TestResult {
@@ -148,7 +173,10 @@ pub async fn handle_xaps_api_request(
             }
             // List one account's devices (admin or the account owner).
             Some(account) => {
-                let account_id = resolve_account_id(server, account).await?;
+                let account = percent_decode_str(account)
+                    .decode_utf8_lossy()
+                    .into_owned();
+                let account_id = resolve_account_id(server, &account).await?;
                 assert_self_or_admin(access_token, account_id, Permission::SysAccountGet)?;
                 Ok(JsonResponse::new(
                     load_xaps_account(server, account_id)
@@ -163,12 +191,18 @@ pub async fn handle_xaps_api_request(
         let Some(account) = path.get(2).copied() else {
             return Err(trc::ResourceEvent::NotFound.into_err());
         };
-        let account_id = resolve_account_id(server, account).await?;
+        let account = percent_decode_str(account)
+            .decode_utf8_lossy()
+            .into_owned();
+        let account_id = resolve_account_id(server, &account).await?;
         // The account owner may remove their own devices without admin
         // permissions.
         assert_self_or_admin(access_token, account_id, Permission::SysAccountUpdate)?;
-        let device_id = path.get(3).copied();
-        let removed = delete_xaps_registrations(server, account_id, device_id)
+        let device_id = path
+            .get(3)
+            .copied()
+            .map(|device_id| percent_decode_str(device_id).decode_utf8_lossy().into_owned());
+        let removed = delete_xaps_registrations(server, account_id, device_id.as_deref())
             .await
             .caused_by(trc::location!())?;
         if removed {
@@ -254,7 +288,7 @@ async fn load_xaps_registrations(server: &Server, account_id: u32) -> trc::Resul
         .into_iter()
         .map(|r| XapsRegistration {
             aps_account_id: r.aps_account_id,
-            device_token: r.device_token,
+            device_token: mask_token(&r.device_token),
             mailboxes: r.mailboxes,
             registered_at: r.registered_at,
         })
@@ -347,9 +381,27 @@ async fn delete_xaps_registrations(
     Ok(true)
 }
 
+/// Masks a device token so the full push credential is never exposed in API
+/// responses or the admin console, consistent with how other secrets are
+/// handled (e.g. MASKED_PASSWORD).
+fn mask_token(token: &str) -> String {
+    if token.len() <= 8 {
+        "****".to_string()
+    } else {
+        format!("{}****{}", &token[..4], &token[token.len() - 4..])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mask_token_shape() {
+        assert_eq!(mask_token("1234"), "****");
+        assert_eq!(mask_token("12345678"), "****");
+        assert_eq!(mask_token("1234567890abcdef"), "1234****cdef");
+    }
 
     #[test]
     fn serialization_shape() {
