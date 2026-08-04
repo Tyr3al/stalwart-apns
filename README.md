@@ -4,6 +4,22 @@
     </a>
 </p>
 
+> ## ⚠️ Fork notice
+>
+> **This is a fork of [stalwartlabs/stalwart](https://github.com/stalwartlabs/stalwart) that adds native
+> Apple Push Notification Service (APNs) support for push notifications.**
+>
+> The fork integrates the functionality of the [`dovecot-xaps-plugin`](https://github.com/freswa/dovecot-xaps-plugin)
+> and [`dovecot-xaps-daemon`](https://github.com/freswa/dovecot-xaps-daemon) directly into the mail server:
+> iOS Mail can register via the `XAPPLEPUSHSERVICE` IMAP extension and receive instant push notifications for
+> new mail, without external components. It is built behind the optional `xaps` cargo feature:
+>
+> ```sh
+> cargo build --release --features xaps
+> ```
+>
+> See [docs/xaps-integration.md](docs/xaps-integration.md) for the full integration plan and details.
+
 <h3 align="center">
   Secure, scalable mail & collaboration server with comprehensive protocol support 🛡️ <br/>(IMAP, JMAP, SMTP, CalDAV, CardDAV, WebDAV)
 </h3>
