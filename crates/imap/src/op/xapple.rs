@@ -5,7 +5,10 @@
  */
 
 use crate::core::Session;
-use common::network::SessionStream;
+use common::{
+    ipc::PushEvent,
+    network::SessionStream,
+};
 use email::push::xaps::{
     XAPS_MAX_REGISTRATIONS, XapsRegistration, XapsRegistrations,
 };
@@ -18,13 +21,11 @@ use store::{
     Serialize, ValueKey,
     write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
 };
-use trc::AddContext;
+use trc::{AddContext, ServerEvent};
 use types::{collection::Collection, field::PrincipalField};
 
-// The APNs topic returned to iOS clients in the XAPPLEPUSHSERVICE reply. The
-// device uses it to validate incoming push notifications, so it must match the
-// configured APNs credentials. Phase 2 (APNs integration) makes it
-// configurable; until then a default is used so the registration flow works.
+// Default APNs topic used when none is configured, mirroring the default
+// "keyFileTopic" of dovecot-xaps-daemon's xapsd.yaml.
 const APS_TOPIC: &str = "com.apple.mail";
 
 impl<T: SessionStream> Session<T> {
@@ -36,6 +37,15 @@ impl<T: SessionStream> Session<T> {
         self.assert_has_permission(Permission::ImapCapability)?;
 
         let arguments = request.parse_xapple_push_service()?;
+
+        // The extension is only functional when XAPS is enabled.
+        if !self.server.core.xaps.enabled {
+            return Err(trc::ImapEvent::Error
+                .into_err()
+                .details("XAPPLEPUSHSERVICE is not enabled.")
+                .ctx(trc::Key::Type, ResponseType::Bad)
+                .id(arguments.tag));
+        }
 
         // Only the subtopic used by iOS Mail is supported.
         if arguments.aps_subtopic != "com.apple.mobilemail" {
@@ -120,10 +130,33 @@ impl<T: SessionStream> Session<T> {
             .await
             .caused_by(trc::location!())?;
 
+        // Notify the push manager so it forwards new-mail events for this
+        // account to the XAPS push path.
+        if self
+            .server
+            .inner
+            .ipc
+            .push_tx
+            .clone()
+            .send(PushEvent::PushServerUpdate {
+                account_id,
+                broadcast: true,
+            })
+            .await
+            .is_err()
+        {
+            trc::event!(
+                Server(ServerEvent::ThreadError),
+                Details = "Error sending push updates.",
+                CausedBy = trc::location!()
+            );
+        }
+
         // Reply with the aps-topic, which the device uses to validate pushes.
         let response = format!(
             "* XAPPLEPUSHSERVICE aps-version {} aps-topic {}\r\n",
-            arguments.aps_version, APS_TOPIC
+            arguments.aps_version,
+            self.server.core.xaps.topic.as_deref().unwrap_or(APS_TOPIC)
         )
         .into_bytes();
         self.write_bytes(

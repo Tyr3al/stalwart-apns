@@ -10,6 +10,8 @@ pub mod http;
 pub mod manager;
 pub mod push;
 
+pub mod apns;
+
 use common::ipc::PushNotification;
 use email::push::PushSubscription;
 use std::{

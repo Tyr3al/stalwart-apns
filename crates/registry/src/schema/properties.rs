@@ -127,6 +127,7 @@ pub enum ObjectInner {
     TracingStore(TracingStore),
     WebDav(WebDav),
     WebHook(WebHook),
+    Xaps(Xaps),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -249,6 +250,7 @@ pub enum ObjectType {
     TracingStore = 114,
     WebDav = 115,
     WebHook = 116,
+    Xaps = 117,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1175,6 +1177,12 @@ pub enum Property {
     WebsocketHeartbeat = 455,
     WebsocketThrottle = 456,
     WebsocketTimeout = 457,
+    XapsEnabled = 924,
+    XapsKeyFileP8 = 925,
+    XapsKeyId = 926,
+    XapsSandbox = 927,
+    XapsTeamId = 928,
+    XapsTopic = 929,
     Zone = 749,
     ZoneIpV4 = 98,
     ZoneIpV6 = 99,

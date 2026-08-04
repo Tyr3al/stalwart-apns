@@ -7545,6 +7545,9 @@ impl EnumImpl for Permission {
             b"sysWebHookUpdate" => Permission::SysWebHookUpdate,
             b"sysWebHookDestroy" => Permission::SysWebHookDestroy,
             b"sysWebHookQuery" => Permission::SysWebHookQuery,
+            b"sysXapsGet" => Permission::SysXapsGet,
+            b"sysXapsQuery" => Permission::SysXapsQuery,
+            b"sysXapsUpdate" => Permission::SysXapsUpdate,
         }
         .copied()
     }
@@ -8221,6 +8224,9 @@ impl EnumImpl for Permission {
             Permission::SysWebHookUpdate => "sysWebHookUpdate",
             Permission::SysWebHookDestroy => "sysWebHookDestroy",
             Permission::SysWebHookQuery => "sysWebHookQuery",
+            Permission::SysXapsGet => "sysXapsGet",
+            Permission::SysXapsQuery => "sysXapsQuery",
+            Permission::SysXapsUpdate => "sysXapsUpdate",
         }
     }
 
@@ -8890,11 +8896,14 @@ impl EnumImpl for Permission {
             656 => Some(Permission::SysWebHookUpdate),
             657 => Some(Permission::SysWebHookDestroy),
             658 => Some(Permission::SysWebHookQuery),
+            660 => Some(Permission::SysXapsGet),
+            661 => Some(Permission::SysXapsQuery),
+            662 => Some(Permission::SysXapsUpdate),
             _ => None,
         }
     }
 
-    const COUNT: usize = 660;
+    const COUNT: usize = 663;
 }
 
 impl serde::Serialize for Permission {

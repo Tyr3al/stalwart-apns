@@ -6265,6 +6265,23 @@ pub struct WebHook {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct Xaps {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+    #[serde(rename = "topic")]
+    pub topic: Option<String>,
+    #[serde(rename = "keyFileP8")]
+    pub key_file_p8: SecretTextOptional,
+    #[serde(rename = "keyId")]
+    pub key_id: Option<String>,
+    #[serde(rename = "teamId")]
+    pub team_id: Option<String>,
+    #[serde(rename = "sandbox")]
+    pub sandbox: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ZenohCoordinator {
     #[serde(rename = "config")]
     pub config: String,

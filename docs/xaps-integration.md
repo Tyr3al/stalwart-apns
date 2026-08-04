@@ -1,6 +1,6 @@
 # Integrating dovecot-xaps (iOS push email) into Stalwart
 
-Status: plan approved — Phase 1 in progress (IMAP `XAPPLEPUSHSERVICE` extension + registration store).
+Status: plan approved — Phase 1 ✅ and Phase 2 ✅ complete (IMAP `XAPPLEPUSHSERVICE` extension, registration store, config section, APNs sender, push-manager notify hook). Phase 3 (delay/throttle for non-`MessageNew` events, cert auth, telemetry) remains.
 
 ## Background: what the original system does
 
@@ -129,7 +129,7 @@ Handler behavior (in-process, async, no HTTP round trip):
 
 ## Phased implementation
 
-**Phase 1 — IMAP extension + registration store** (self-contained, testable without Apple) ✅ in progress
+**Phase 1 — IMAP extension + registration store** ✅ done
 1. Bump command-name cap (15 → 32); add `Command` variant, map entry, `Display` arm.
 2. Add capability (enum, wire string, base pre-auth list).
 3. Token parser `parser/xapple.rs` + `op/xapple.rs` handler + dispatch arm + auth gating.
@@ -137,12 +137,27 @@ Handler behavior (in-process, async, no HTTP round trip):
    staleness pruning (port `database.go` `cleanupRegistered`).
 5. Unit tests: parser (valid/invalid), capability presence, receiver command-name length.
 
-**Phase 2 — APNs sender + notify hook**
-1. `apns.rs` transport with token auth (P8), JWT caching, `410` handling.
-2. XAPS branch in push manager `Event::Push` (INBOX-only, as original), reading `MessageData.mailboxes`.
-3. Config section (see Integration point C) — **replaces the Phase-1 placeholder aps-topic**.
-4. Tests with a mock APNs HTTP/2 server. Note: an **Apple push certificate is mandatory** (macOS Server purchase
-   or paid Developer account) — a hard external prerequisite of the whole XAPS idea.
+**Phase 2 — APNs sender + notify hook** ✅ done
+1. `apns.rs` transport with token auth (P8), JWT caching, `410` handling
+   (`SendResult::DeviceTokenInactive` → registration deleted).
+2. XAPS branch in the push manager (`push.rs`): accounts with device registrations are registered with the push
+   router via `PushServerRegister` (startup load + `Event::Update` on `PushServerUpdate` broadcast); on
+   `Event::Push` with an `EmailPush` for a registered account, `deliver_xaps_notifications` runs (INBOX-only,
+   reads `MessageData.mailboxes`, checks `INBOX_ID = 0`).
+3. Config: new `xaps` registry singleton (`ObjectType::Xaps`, `SysXaps{Get,Query,Update}` permissions,
+   `resources/schema/schema.json` admin-UI entry), runtime `XapsConfig` in `Core`, validation when `enabled`
+   without credentials. Replaces the Phase-1 placeholder aps-topic.
+4. Tests: JWT format/caching + sandbox host selection (`apns.rs`), plus the Phase-1 parser/upsert/prune tests.
+   Note: an **Apple push certificate is mandatory** (macOS Server purchase or paid Developer account) — a hard
+   external prerequisite of the whole XAPS idea.
+
+Design notes (Phase 2):
+- Requires the `push_notifications` role (same as WebPush) and `xaps.enabled`.
+- The router's per-account `is_push` flag is shared between WebPush and XAPS; unregistration is mutually
+  exclusive (an account is only unregistered when it has neither WebPush subscriptions nor XAPS devices) — see
+  `push.rs` `Event::Update`.
+- Registration changes propagate cluster-wide via `PushServerUpdate { broadcast: true }`; delivery is
+  shard-consistent (`jmap.push_total_shards` / `cluster_push_shard`), so exactly one node sends each push.
 
 **Phase 3 — fidelity & polish** (optional)
 1. Port the delay/throttle map for non-`MessageNew` events (move/copy/delete → delayed `{"aps":...}` to trigger

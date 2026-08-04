@@ -183,6 +183,7 @@ impl RegistryGet for Server {
             | ObjectType::TracingStore
             | ObjectType::WebDav
             | ObjectType::WebHook
+            | ObjectType::Xaps
             | ObjectType::Account
             | ObjectType::DsnReportSettings
             | ObjectType::MailingList

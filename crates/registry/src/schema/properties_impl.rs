@@ -129,6 +129,7 @@ impl EnumImpl for ObjectType {
             b"TracingStore" => ObjectType::TracingStore,
             b"WebDav" => ObjectType::WebDav,
             b"WebHook" => ObjectType::WebHook,
+            b"Xaps" => ObjectType::Xaps,
         }
     }
 
@@ -251,6 +252,7 @@ impl EnumImpl for ObjectType {
             ObjectType::TracingStore => "TracingStore",
             ObjectType::WebDav => "WebDav",
             ObjectType::WebHook => "WebHook",
+            ObjectType::Xaps => "Xaps",
         }
     }
 
@@ -377,6 +379,7 @@ impl EnumImpl for ObjectType {
             114 => Some(ObjectType::TracingStore),
             115 => Some(ObjectType::WebDav),
             116 => Some(ObjectType::WebHook),
+            117 => Some(ObjectType::Xaps),
             _ => None,
         }
     }
@@ -1328,6 +1331,12 @@ impl EnumImpl for Property {
             b"websocketHeartbeat" => Property::WebsocketHeartbeat,
             b"websocketThrottle" => Property::WebsocketThrottle,
             b"websocketTimeout" => Property::WebsocketTimeout,
+            b"xapsEnabled" => Property::XapsEnabled,
+            b"xapsKeyFileP8" => Property::XapsKeyFileP8,
+            b"xapsKeyId" => Property::XapsKeyId,
+            b"xapsSandbox" => Property::XapsSandbox,
+            b"xapsTeamId" => Property::XapsTeamId,
+            b"xapsTopic" => Property::XapsTopic,
             b"zone" => Property::Zone,
             b"zoneIpV4" => Property::ZoneIpV4,
             b"zoneIpV6" => Property::ZoneIpV6,
@@ -2257,6 +2266,12 @@ impl EnumImpl for Property {
             Property::WebsocketHeartbeat => "websocketHeartbeat",
             Property::WebsocketThrottle => "websocketThrottle",
             Property::WebsocketTimeout => "websocketTimeout",
+            Property::XapsEnabled => "xapsEnabled",
+            Property::XapsKeyFileP8 => "xapsKeyFileP8",
+            Property::XapsKeyId => "xapsKeyId",
+            Property::XapsSandbox => "xapsSandbox",
+            Property::XapsTeamId => "xapsTeamId",
+            Property::XapsTopic => "xapsTopic",
             Property::Zone => "zone",
             Property::ZoneIpV4 => "zoneIpV4",
             Property::ZoneIpV6 => "zoneIpV6",
@@ -3190,6 +3205,12 @@ impl EnumImpl for Property {
             455 => Some(Property::WebsocketHeartbeat),
             456 => Some(Property::WebsocketThrottle),
             457 => Some(Property::WebsocketTimeout),
+            924 => Some(Property::XapsEnabled),
+            925 => Some(Property::XapsKeyFileP8),
+            926 => Some(Property::XapsKeyId),
+            927 => Some(Property::XapsSandbox),
+            928 => Some(Property::XapsTeamId),
+            929 => Some(Property::XapsTopic),
             749 => Some(Property::Zone),
             98 => Some(Property::ZoneIpV4),
             99 => Some(Property::ZoneIpV6),
@@ -3339,6 +3360,7 @@ impl ObjectType {
             ObjectType::TracingStore => TracingStore::FLAGS,
             ObjectType::WebDav => WebDav::FLAGS,
             ObjectType::WebHook => WebHook::FLAGS,
+            ObjectType::Xaps => Xaps::FLAGS,
         }
     }
 
@@ -3706,6 +3728,7 @@ impl ObjectType {
             ObjectType::TracingStore => Permission::SysTracingStoreGet,
             ObjectType::WebDav => Permission::SysWebDavGet,
             ObjectType::WebHook => Permission::SysWebHookGet,
+            ObjectType::Xaps => Permission::SysXapsGet,
         }
     }
 
@@ -3770,6 +3793,7 @@ impl ObjectType {
             ObjectType::Trace => Permission::SysTraceQuery,
             ObjectType::Tracer => Permission::SysTracerQuery,
             ObjectType::WebHook => Permission::SysWebHookQuery,
+            ObjectType::Xaps => Permission::SysXapsQuery,
             _ => unreachable!(),
         }
     }
@@ -4361,6 +4385,11 @@ impl ObjectType {
                 Permission::SysWebHookUpdate,
                 Permission::SysWebHookDestroy,
             ],
+            ObjectType::Xaps => [
+                Permission::SysXapsUpdate,
+                Permission::SysXapsUpdate,
+                Permission::SysXapsUpdate,
+            ],
         }
     }
 }
@@ -4729,6 +4758,7 @@ impl ObjectInner {
             ObjectInner::TracingStore(obj) => obj.to_pickled_vec(),
             ObjectInner::WebDav(obj) => obj.to_pickled_vec(),
             ObjectInner::WebHook(obj) => obj.to_pickled_vec(),
+            ObjectInner::Xaps(obj) => obj.to_pickled_vec(),
         }
     }
 
@@ -4920,6 +4950,7 @@ impl ObjectInner {
             ObjectType::TracingStore => Pickle::unpickle(stream).map(ObjectInner::TracingStore),
             ObjectType::WebDav => Pickle::unpickle(stream).map(ObjectInner::WebDav),
             ObjectType::WebHook => Pickle::unpickle(stream).map(ObjectInner::WebHook),
+            ObjectType::Xaps => Pickle::unpickle(stream).map(ObjectInner::Xaps),
         }
     }
 
@@ -5209,6 +5240,7 @@ impl ObjectInner {
             }
             ObjectType::WebDav => WebDav::deserialize(deserializer).map(ObjectInner::WebDav),
             ObjectType::WebHook => WebHook::deserialize(deserializer).map(ObjectInner::WebHook),
+            ObjectType::Xaps => Xaps::deserialize(deserializer).map(ObjectInner::Xaps),
         }
     }
 
@@ -5365,6 +5397,7 @@ impl Object {
             ObjectInner::TracingStore(_) => TracingStore::FLAGS,
             ObjectInner::WebDav(_) => WebDav::FLAGS,
             ObjectInner::WebHook(_) => WebHook::FLAGS,
+            ObjectInner::Xaps(_) => Xaps::FLAGS,
         }
     }
 
@@ -5487,6 +5520,7 @@ impl Object {
             ObjectInner::TracingStore(_) => ObjectType::TracingStore,
             ObjectInner::WebDav(_) => ObjectType::WebDav,
             ObjectInner::WebHook(_) => ObjectType::WebHook,
+            ObjectInner::Xaps(_) => ObjectType::Xaps,
         }
     }
 
@@ -5638,6 +5672,7 @@ impl Object {
             ObjectInner::TracingStore(obj) => obj.validate(errors),
             ObjectInner::WebDav(obj) => obj.validate(errors),
             ObjectInner::WebHook(obj) => obj.validate(errors),
+            ObjectInner::Xaps(obj) => obj.validate(errors),
         }
     }
 
@@ -5760,6 +5795,7 @@ impl Object {
             ObjectInner::TracingStore(obj) => obj.index(i),
             ObjectInner::WebDav(obj) => obj.index(i),
             ObjectInner::WebHook(obj) => obj.index(i),
+            ObjectInner::Xaps(obj) => obj.index(i),
         }
     }
 
@@ -5886,6 +5922,7 @@ impl Object {
             ObjectInner::TracingStore(obj) => obj.patch(pointer, value),
             ObjectInner::WebDav(obj) => obj.patch(pointer, value),
             ObjectInner::WebHook(obj) => obj.patch(pointer, value),
+            ObjectInner::Xaps(obj) => obj.patch(pointer, value),
         }
     }
 }
@@ -6010,6 +6047,7 @@ impl IntoValue for Object {
             ObjectInner::TracingStore(obj) => obj.into_value(),
             ObjectInner::WebDav(obj) => obj.into_value(),
             ObjectInner::WebHook(obj) => obj.into_value(),
+            ObjectInner::Xaps(obj) => obj.into_value(),
         }
     }
 }
@@ -6142,6 +6180,7 @@ impl From<ObjectType> for ObjectInner {
             ObjectType::TracingStore => ObjectInner::TracingStore(Default::default()),
             ObjectType::WebDav => ObjectInner::WebDav(Default::default()),
             ObjectType::WebHook => ObjectInner::WebHook(Default::default()),
+            ObjectType::Xaps => ObjectInner::Xaps(Default::default()),
         }
     }
 }
@@ -7896,6 +7935,21 @@ impl From<Object> for WebHook {
     fn from(obj: Object) -> Self {
         match obj.inner {
             ObjectInner::WebHook(obj) => obj,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<Xaps> for ObjectInner {
+    fn from(value: Xaps) -> Self {
+        ObjectInner::Xaps(value)
+    }
+}
+
+impl From<Object> for Xaps {
+    fn from(obj: Object) -> Self {
+        match obj.inner {
+            ObjectInner::Xaps(obj) => obj,
             _ => unreachable!(),
         }
     }

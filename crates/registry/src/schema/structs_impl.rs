@@ -47205,6 +47205,88 @@ impl RegistryJsonPropertyPatch for WebHook {
     }
 }
 
+impl ObjectImpl for Xaps {
+    const FLAGS: u64 = OBJ_SINGLETON;
+    const VERSION: u8 = 0;
+    const OBJECT: ObjectType = ObjectType::Xaps;
+
+    fn validate(&self, _: &mut Vec<ValidationError>) -> bool {
+        true
+    }
+
+    fn index<'x>(&'x self, _: &mut IndexBuilder<'x>) {}
+}
+
+impl Pickle for Xaps {
+    fn pickle(&self, out: &mut Vec<u8>) {
+        self.enabled.pickle(out);
+        self.topic.pickle(out);
+        self.key_file_p8.pickle(out);
+        self.key_id.pickle(out);
+        self.team_id.pickle(out);
+        self.sandbox.pickle(out);
+    }
+
+    fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
+        let mut this = Self::default();
+        this.enabled = Pickle::unpickle(stream)?;
+        this.topic = Pickle::unpickle(stream)?;
+        this.key_file_p8 = Pickle::unpickle(stream)?;
+        this.key_id = Pickle::unpickle(stream)?;
+        this.team_id = Pickle::unpickle(stream)?;
+        this.sandbox = Pickle::unpickle(stream)?;
+        Some(this)
+    }
+}
+
+impl Default for Xaps {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            topic: None,
+            key_file_p8: Default::default(),
+            key_id: None,
+            team_id: None,
+            sandbox: false,
+        }
+    }
+}
+
+impl IntoValue for Xaps {
+    fn into_value(self) -> JmapValue<'static> {
+        let mut map = jmap_tools::Map::with_capacity(6);
+        map.insert_unchecked(Property::XapsEnabled, self.enabled.into_value());
+        map.insert_unchecked(Property::XapsTopic, self.topic.into_value());
+        map.insert_unchecked(Property::XapsKeyFileP8, self.key_file_p8.into_value());
+        map.insert_unchecked(Property::XapsKeyId, self.key_id.into_value());
+        map.insert_unchecked(Property::XapsTeamId, self.team_id.into_value());
+        map.insert_unchecked(Property::XapsSandbox, self.sandbox.into_value());
+        JmapValue::Object(map)
+    }
+}
+
+impl RegistryJsonPropertyPatch for Xaps {
+    fn patch_property<'x>(
+        &mut self,
+        mut pointer: JsonPointerPatch<'_>,
+        value: JmapValue<'x>,
+    ) -> PatchResult<'x> {
+        match pointer.next_property() {
+            Some(Property::XapsEnabled) => self.enabled.patch(pointer, value),
+            Some(Property::XapsTopic) => self.topic.patch(pointer, value),
+            Some(Property::XapsKeyFileP8) => self.key_file_p8.patch(pointer, value),
+            Some(Property::XapsKeyId) => self.key_id.patch(pointer, value),
+            Some(Property::XapsTeamId) => self.team_id.patch(pointer, value),
+            Some(Property::XapsSandbox) => self.sandbox.patch(pointer, value),
+            Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
+                property: Property::Type,
+                value,
+            }),
+            _ => Err(PatchError::new(pointer, "Invalid property")),
+        }
+    }
+}
+
 impl ZenohCoordinator {
     fn validate(&self, errors: &mut Vec<ValidationError>) -> bool {
         let neb = errors.len();

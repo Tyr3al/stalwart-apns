@@ -12,6 +12,7 @@ use crate::{
     auth::oauth::config::OAuthConfig,
     config::mailstore::{
         email::EmailConfig, imap::ImapConfig, scripts::Scripting, spamfilter::SpamFilterConfig,
+        xaps::XapsConfig,
     },
 };
 use arc_swap::ArcSwap;
@@ -90,6 +91,7 @@ impl Core {
             smtp: Box::pin(SmtpConfig::parse(bp)).await,
             jmap: JmapConfig::parse(bp).await,
             imap: ImapConfig::parse(bp).await,
+            xaps: XapsConfig::parse(bp).await,
             oauth: OAuthConfig::parse(bp).await,
             metrics: Metrics::parse(bp).await,
             spam: SpamFilterConfig::parse(bp).await,

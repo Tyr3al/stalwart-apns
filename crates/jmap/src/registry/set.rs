@@ -256,6 +256,7 @@ impl RegistrySet for Server {
             | ObjectType::StoreLookup
             | ObjectType::Tracer
             | ObjectType::WebHook
+            | ObjectType::Xaps
             | ObjectType::PublicKey
             | ObjectType::DkimSignature
             | ObjectType::MaskedEmail

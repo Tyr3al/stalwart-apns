@@ -2178,6 +2178,9 @@ pub enum Permission {
     SysWebHookUpdate = 656,
     SysWebHookDestroy = 657,
     SysWebHookQuery = 658,
+    SysXapsGet = 660,
+    SysXapsQuery = 661,
+    SysXapsUpdate = 662,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
