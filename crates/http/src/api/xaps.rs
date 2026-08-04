@@ -5,14 +5,17 @@
  */
 
 //! Management API for XAPS device registrations, consumed by the web admin
-//! console to list and remove iOS devices registered per account:
+//! console and by users managing their own devices:
 //!
-//! - `GET    /api/xaps/registrations`                      list accounts with registered devices
-//! - `GET    /api/xaps/registrations/<account>`            list one account's devices
-//! - `DELETE /api/xaps/registrations/<account>`            remove all devices of an account
-//! - `DELETE /api/xaps/registrations/<account>/<apsAccountId>` remove one device
+//! - `GET    /api/xaps/registrations`                      list accounts with registered devices (admin)
+//! - `GET    /api/xaps/registrations/<account>`            list one account's devices (admin or self)
+//! - `DELETE /api/xaps/registrations/<account>`            remove all devices of an account (admin or self)
+//! - `DELETE /api/xaps/registrations/<account>/<apsAccountId>` remove one device (admin or self)
 //!
-//! `<account>` is either a numeric account id or an email address.
+//! `<account>` is either a numeric account id or an email address. Requests
+//! for the authenticated user's own account are allowed without admin
+//! permissions (self-service); other accounts and the list-all endpoint
+//! require `SysAccountGet` (list) / `SysAccountUpdate` (delete).
 
 use common::{
     Server,
@@ -65,47 +68,50 @@ pub async fn handle_xaps_api_request(
     }
 
     if method == Method::GET {
-        access_token.enforce_permission(Permission::SysAccountGet)?;
-            match path.get(2).copied() {
-                // List all accounts with registered devices.
-                None => {
-                    let mut accounts = Vec::new();
-                    for account_id in server
-                        .document_ids(
-                            u32::MAX,
-                            Collection::Principal,
-                            PrincipalField::XapsRegistrations,
-                        )
-                        .await?
-                    {
-                        // Skip accounts that were deleted since the scan.
-                        if let Some(account) = load_xaps_account(server, account_id)
-                            .await
-                            .caused_by(trc::location!())?
-                        {
-                            accounts.push(account);
-                        }
-                    }
-                    Ok(JsonResponse::new(XapsAccounts { accounts }).into_http_response())
-                }
-                // List one account's devices.
-                Some(account) => {
-                    let account_id = resolve_account_id(server, account).await?;
-                    Ok(JsonResponse::new(
-                        load_xaps_account(server, account_id)
-                            .await
-                            .caused_by(trc::location!())?
-                            .ok_or_else(|| trc::ResourceEvent::NotFound.into_err())?,
+        match path.get(2).copied() {
+            // List all accounts with registered devices (admin only).
+            None => {
+                access_token.enforce_permission(Permission::SysAccountGet)?;
+                let mut accounts = Vec::new();
+                for account_id in server
+                    .document_ids(
+                        u32::MAX,
+                        Collection::Principal,
+                        PrincipalField::XapsRegistrations,
                     )
-                    .into_http_response())
+                    .await?
+                {
+                    // Skip accounts that were deleted since the scan.
+                    if let Some(account) = load_xaps_account(server, account_id)
+                        .await
+                        .caused_by(trc::location!())?
+                    {
+                        accounts.push(account);
+                    }
                 }
+                Ok(JsonResponse::new(XapsAccounts { accounts }).into_http_response())
             }
+            // List one account's devices (admin or the account owner).
+            Some(account) => {
+                let account_id = resolve_account_id(server, account).await?;
+                assert_self_or_admin(access_token, account_id, Permission::SysAccountGet)?;
+                Ok(JsonResponse::new(
+                    load_xaps_account(server, account_id)
+                        .await
+                        .caused_by(trc::location!())?
+                        .ok_or_else(|| trc::ResourceEvent::NotFound.into_err())?,
+                )
+                .into_http_response())
+            }
+        }
     } else if method == Method::DELETE {
-        access_token.enforce_permission(Permission::SysAccountUpdate)?;
         let Some(account) = path.get(2).copied() else {
             return Err(trc::ResourceEvent::NotFound.into_err());
         };
         let account_id = resolve_account_id(server, account).await?;
+        // The account owner may remove their own devices without admin
+        // permissions.
+        assert_self_or_admin(access_token, account_id, Permission::SysAccountUpdate)?;
         let device_id = path.get(3).copied();
         let removed = delete_xaps_registrations(server, account_id, device_id)
             .await
@@ -117,6 +123,20 @@ pub async fn handle_xaps_api_request(
         }
     } else {
         Err(trc::ResourceEvent::NotFound.into_err())
+    }
+}
+
+/// Allows the request when the target account is the authenticated user's own
+/// account, otherwise requires the given admin permission.
+fn assert_self_or_admin(
+    access_token: &AccessToken,
+    account_id: u32,
+    admin_permission: Permission,
+) -> trc::Result<()> {
+    if access_token.account_id() == account_id {
+        Ok(())
+    } else {
+        access_token.enforce_permission(admin_permission)
     }
 }
 
