@@ -11,6 +11,8 @@
 pub mod telemetry;
 // SPDX-SnippetEnd
 pub mod diagnose;
+#[cfg(feature = "xaps")]
+pub mod xaps;
 
 use crate::{
     api::diagnose::{DeliveryStage, spawn_delivery_diagnose},
@@ -108,6 +110,13 @@ impl ManagementApi for Server {
                 } else {
                     Ok(HttpResponse::redirect(format!("/api/schema/{SCHEMA_HASH}")))
                 }
+            }
+            #[cfg(feature = "xaps")]
+            "xaps" => {
+                // Authenticate request
+                let (_in_flight, access_token) = self.authenticate_headers(req, session).await?;
+                crate::api::xaps::handle_xaps_api_request(self, &path, &access_token, req.method())
+                    .await
             }
             "token" => {
                 let access_token = self.management_access_token(req, session).await?;

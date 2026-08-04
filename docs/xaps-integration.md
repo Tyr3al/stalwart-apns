@@ -206,6 +206,19 @@ Follow-ups already landed after Phase 3:
   encrypted key bags are supported — same limitation as the original Go daemon (crypto/pkcs12); PBES2/AES
   files (OpenSSL 3.x default) are rejected with an error event. Auth methods are mutually exclusive by
   precedence (token > PEM > P12), matching the daemon.
+- Management API for registered devices (`crates/http/src/api/xaps.rs`, feature-gated):
+  `GET /api/xaps/registrations` (all accounts with devices), `GET /api/xaps/registrations/<account>`,
+  `DELETE /api/xaps/registrations/<account>` (all devices), `DELETE /api/xaps/registrations/<account>/<apsAccountId>`.
+  `<account>` is a numeric account id or email address; permissions `SysAccountGet` (list) /
+  `SysAccountUpdate` (delete); deletes mirror the push-manager cleanup (untag + clear, `PushServerUpdate`
+  broadcast, `assert_value` against concurrent upserts) and stale registrations are pruned on read.
+
+Remaining (out of scope / external):
+- Live multi-node verification and a mock-APNs end-to-end test harness (needs an Apple push certificate).
+- Webadmin console UI for the device API (the UI lives in the separate stalwart-webadmin repo; the
+  `camelCase` JSON contract is fixed by the `serialization_shape` test in `api/xaps.rs`).
+- Topic currently comes from the `topic` config option; deriving it from the certificate subject UID
+  (and making it non-overwritable) is a pending design decision.
 
 ## Alternatives & risks
 
