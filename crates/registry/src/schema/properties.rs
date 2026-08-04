@@ -1187,6 +1187,8 @@ pub enum Property {
     XapsCheckInterval = 931,
     XapsCertificateFilePem = 932,
     XapsCertificateFilePemKey = 933,
+    XapsCertificateFileP12 = 934,
+    XapsCertificateFileP12Password = 935,
     Zone = 749,
     ZoneIpV4 = 98,
     ZoneIpV6 = 99,

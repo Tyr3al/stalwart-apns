@@ -194,8 +194,6 @@ Design notes (Phase 2):
 3. `delay`/`checkInterval` config (defaults 30s/20s, same as `xapsd.yaml`) + admin-UI schema fields.
 
 Remaining (out of scope / external):
-- P12 cert auth (would need an additional PFX-parsing dependency; PEM and token auth cover both modern and
-  legacy certificate flows).
 - Live multi-node verification and a mock-APNs end-to-end test harness (needs an Apple push certificate).
 
 Follow-ups already landed after Phase 3:
@@ -203,6 +201,11 @@ Follow-ups already landed after Phase 3:
   `PushSubscriptionEvent` reuse; `TOTAL_EVENT_COUNT` bumped to 638; error events log at `Level::Error`.
 - APNs retry/backoff for transient failures: immediate and delayed sends retry with exponential backoff
   (60s base, capped at 1h) up to `XAPS_MAX_ATTEMPTS = 5` total attempts, then drop with an error event.
+- P12 (PKCS#12) certificate auth (`certificateFileP12`, base64-encoded, + optional `certificateFileP12Password`)
+  as a third auth mode via the pure-Rust `p12` crate. Note: only legacy PBES1 (SHA1+3DES / SHA1+RC2-40)
+  encrypted key bags are supported — same limitation as the original Go daemon (crypto/pkcs12); PBES2/AES
+  files (OpenSSL 3.x default) are rejected with an error event. Auth methods are mutually exclusive by
+  precedence (token > PEM > P12), matching the daemon.
 
 ## Alternatives & risks
 

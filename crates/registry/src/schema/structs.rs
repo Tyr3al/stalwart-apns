@@ -6286,6 +6286,10 @@ pub struct Xaps {
     pub certificate_file_pem: SecretTextOptional,
     #[serde(rename = "certificateFilePemKey")]
     pub certificate_file_pem_key: SecretTextOptional,
+    #[serde(rename = "certificateFileP12")]
+    pub certificate_file_p12: SecretTextOptional,
+    #[serde(rename = "certificateFileP12Password")]
+    pub certificate_file_p12_password: SecretTextOptional,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

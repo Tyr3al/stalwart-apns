@@ -4,7 +4,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
 use common::{
     BuildServer, Inner, Server,
     config::mailstore::xaps::XapsConfig,
@@ -65,6 +68,18 @@ struct TokenAuth {
     token: Arc<Mutex<Option<(String, u64)>>>,
 }
 
+/// PEM-encodes DER data with the given block tag (e.g. "CERTIFICATE").
+fn pem_encode(tag: &str, der: &[u8]) -> String {
+    let b64 = STANDARD.encode(der);
+    let mut out = format!("-----BEGIN {tag}-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        out.push_str(std::str::from_utf8(chunk).unwrap());
+        out.push('\n');
+    }
+    out.push_str(&format!("-----END {tag}-----\n"));
+    out
+}
+
 impl ApnsClient {
     /// Builds an APNs client from the XAPS configuration. Returns `None` when
     /// the feature is not fully configured.
@@ -78,7 +93,7 @@ impl ApnsClient {
             .timeout(std::time::Duration::from_secs(APNS_REQUEST_TIMEOUT_SECS));
 
         // Token-based authentication (P8 key), or certificate-based
-        // authentication (PEM client certificate).
+        // authentication (PEM client certificate or PKCS#12).
         let token_auth = if let Some(key_file_p8) = config
             .key_file_p8
             .as_deref()
@@ -92,15 +107,78 @@ impl ApnsClient {
                 signing_key,
                 token: Arc::new(Mutex::new(None)),
             })
-        } else {
-            let certificate = config.certificate_file_pem.as_deref()?;
-            let private_key = config.certificate_file_pem_key.as_deref()?;
+        } else if let (Some(certificate), Some(private_key)) = (
+            config
+                .certificate_file_pem
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty()),
+            config
+                .certificate_file_pem_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|k| !k.is_empty()),
+        ) {
             // The certificate and key PEM blocks are combined into a single
             // buffer (separated by a newline), which reqwest's
             // Identity::from_pem accepts.
             let mut identity_pem = certificate.as_bytes().to_vec();
             identity_pem.push(b'\n');
             identity_pem.extend_from_slice(private_key.as_bytes());
+            client_builder =
+                client_builder.identity(reqwest::Identity::from_pem(&identity_pem).ok()?);
+            None
+        } else {
+            // PKCS#12 (PFX) certificate and key, base64-encoded in the
+            // configuration. Note: only legacy PBES1 (SHA1+3DES / SHA1+RC2-40)
+            // encrypted key bags are supported, matching the original
+            // dovecot-xaps-daemon (Go's crypto/pkcs12).
+            let certificate_file_p12 = config
+                .certificate_file_p12
+                .as_deref()
+                .map(str::trim)
+                .filter(|c| !c.is_empty())?;
+            // Tolerate whitespace/newlines in the base64 input.
+            let b64: String = certificate_file_p12
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let p12_der = match STANDARD.decode(b64) {
+                Ok(p12_der) => p12_der,
+                Err(err) => {
+                    trc::event!(
+                        Xaps(XapsEvent::Error),
+                        Details = format!("Invalid base64 in certificateFileP12: {err}"),
+                    );
+                    return None;
+                }
+            };
+            let pfx = match p12::PFX::parse(&p12_der) {
+                Ok(pfx) => pfx,
+                Err(err) => {
+                    trc::event!(
+                        Xaps(XapsEvent::Error),
+                        Details = format!("Invalid PKCS#12 data in certificateFileP12: {err}"),
+                    );
+                    return None;
+                }
+            };
+            let password = config.certificate_file_p12_password.as_deref().unwrap_or("");
+            let (Some(cert), Some(key)) = (
+                pfx.cert_x509_bags(password).ok().and_then(|c| c.into_iter().next()),
+                pfx.key_bags(password).ok().and_then(|k| k.into_iter().next()),
+            ) else {
+                trc::event!(
+                    Xaps(XapsEvent::Error),
+                    Details = "No certificate and private key found in certificateFileP12 \
+                               (wrong password or unsupported encryption)",
+                );
+                return None;
+            };
+
+            let mut identity_pem = pem_encode("CERTIFICATE", &cert).into_bytes();
+            identity_pem.push(b'\n');
+            identity_pem.extend_from_slice(pem_encode("PRIVATE KEY", &key).as_bytes());
             client_builder =
                 client_builder.identity(reqwest::Identity::from_pem(&identity_pem).ok()?);
             None
@@ -556,6 +634,8 @@ mod tests {
             team_id: Some("TEAM123".to_string()),
             certificate_file_pem: None,
             certificate_file_pem_key: None,
+            certificate_file_p12: None,
+            certificate_file_p12_password: None,
             sandbox: true,
             delay: 30,
             check_interval: 20,
@@ -643,6 +723,73 @@ mod tests {
     }
 
     #[test]
+    fn p12_auth_mode() {
+        let certified_key =
+            rcgen::generate_simple_self_signed(vec!["apns.example.com".to_string()]).unwrap();
+        let p12_der = p12::PFX::new(
+            certified_key.cert.der().as_ref(),
+            &certified_key.signing_key.serialize_der(),
+            None,
+            "password",
+            "apns",
+        )
+        .unwrap()
+        .to_der();
+        let config = XapsConfig {
+            enabled: true,
+            topic: Some("com.apple.mail".to_string()),
+            key_file_p8: None,
+            key_id: None,
+            team_id: None,
+            certificate_file_pem: None,
+            certificate_file_pem_key: None,
+            certificate_file_p12: Some(STANDARD.encode(p12_der)),
+            certificate_file_p12_password: Some("password".to_string()),
+            sandbox: false,
+            delay: 30,
+            check_interval: 20,
+        };
+        let client = ApnsClient::try_new(&config).unwrap();
+        assert!(
+            client.token_auth.is_none(),
+            "P12 auth must not use token auth"
+        );
+        assert_eq!(client.host, APNS_PRODUCTION_HOST);
+        assert_eq!(client.topic, "com.apple.mail");
+    }
+
+    #[test]
+    fn p12_auth_rejects_bad_input() {
+        // Invalid base64.
+        let mut config = test_config();
+        config.key_file_p8 = None;
+        config.key_id = None;
+        config.team_id = None;
+        config.certificate_file_p12 = Some("not base64!!".to_string());
+        assert!(ApnsClient::try_new(&config).is_none());
+
+        // Wrong password.
+        let certified_key =
+            rcgen::generate_simple_self_signed(vec!["apns.example.com".to_string()]).unwrap();
+        let p12_der = p12::PFX::new(
+            certified_key.cert.der().as_ref(),
+            &certified_key.signing_key.serialize_der(),
+            None,
+            "password",
+            "apns",
+        )
+        .unwrap()
+        .to_der();
+        let mut config = test_config();
+        config.key_file_p8 = None;
+        config.key_id = None;
+        config.team_id = None;
+        config.certificate_file_p12 = Some(STANDARD.encode(p12_der));
+        config.certificate_file_p12_password = Some("wrong".to_string());
+        assert!(ApnsClient::try_new(&config).is_none());
+    }
+
+    #[test]
     fn certificate_auth_mode() {
         let certified_key =
             rcgen::generate_simple_self_signed(vec!["apns.example.com".to_string()]).unwrap();
@@ -654,6 +801,8 @@ mod tests {
             team_id: None,
             certificate_file_pem: Some(certified_key.cert.pem()),
             certificate_file_pem_key: Some(certified_key.signing_key.serialize_pem()),
+            certificate_file_p12: None,
+            certificate_file_p12_password: None,
             sandbox: false,
             delay: 30,
             check_interval: 20,
@@ -675,6 +824,8 @@ mod tests {
             team_id: None,
             certificate_file_pem: None,
             certificate_file_pem_key: None,
+            certificate_file_p12: None,
+            certificate_file_p12_password: None,
             sandbox: false,
             delay: 30,
             check_interval: 20,

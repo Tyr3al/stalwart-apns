@@ -47229,6 +47229,8 @@ impl Pickle for Xaps {
         self.check_interval.pickle(out);
         self.certificate_file_pem.pickle(out);
         self.certificate_file_pem_key.pickle(out);
+        self.certificate_file_p12.pickle(out);
+        self.certificate_file_p12_password.pickle(out);
     }
 
     fn unpickle(stream: &mut crate::pickle::PickledStream<'_>) -> Option<Self> {
@@ -47243,6 +47245,8 @@ impl Pickle for Xaps {
         this.check_interval = Pickle::unpickle(stream)?;
         this.certificate_file_pem = Pickle::unpickle(stream)?;
         this.certificate_file_pem_key = Pickle::unpickle(stream)?;
+        this.certificate_file_p12 = Pickle::unpickle(stream)?;
+        this.certificate_file_p12_password = Pickle::unpickle(stream)?;
         Some(this)
     }
 }
@@ -47260,6 +47264,8 @@ impl Default for Xaps {
             check_interval: 20,
             certificate_file_pem: Default::default(),
             certificate_file_pem_key: Default::default(),
+            certificate_file_p12: Default::default(),
+            certificate_file_p12_password: Default::default(),
         }
     }
 }
@@ -47283,6 +47289,14 @@ impl IntoValue for Xaps {
             Property::XapsCertificateFilePemKey,
             self.certificate_file_pem_key.into_value(),
         );
+        map.insert_unchecked(
+            Property::XapsCertificateFileP12,
+            self.certificate_file_p12.into_value(),
+        );
+        map.insert_unchecked(
+            Property::XapsCertificateFileP12Password,
+            self.certificate_file_p12_password.into_value(),
+        );
         JmapValue::Object(map)
     }
 }
@@ -47305,6 +47319,12 @@ impl RegistryJsonPropertyPatch for Xaps {
             Some(Property::XapsCertificateFilePem) => self.certificate_file_pem.patch(pointer, value),
             Some(Property::XapsCertificateFilePemKey) => {
                 self.certificate_file_pem_key.patch(pointer, value)
+            }
+            Some(Property::XapsCertificateFileP12) => {
+                self.certificate_file_p12.patch(pointer, value)
+            }
+            Some(Property::XapsCertificateFileP12Password) => {
+                self.certificate_file_p12_password.patch(pointer, value)
             }
             Some(Property::Type) => Ok(MaybeUnpatched::Unpatched {
                 property: Property::Type,
