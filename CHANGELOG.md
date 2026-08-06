@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.16-apns.3] - 2026-08-07
+
+### Fixed
+- **Critical: server failed to start** (`panicked at crates/common/src/auth/permissions.rs:243: called \`Option::unwrap()\` on a \`None\` value`). `DefaultPermissions::default()` swept `0..Permission::COUNT` and unwrapped `Permission::from_id()` for every id, assuming a dense range — but permission ids are sparse (upstream's own range plus this fork's reserved blocks leave large gaps, e.g. nothing is assigned between roughly 620 and 9000), so this always panicked on the first gap id. It happened to never run on an already-populated deployment before 0.16.16-apns.2, since it was previously only reachable from the empty-database bootstrap path; the 0.16.16-apns.2 fix made it run on every boot, which is what surfaced this pre-existing bug. The sweep now skips ids with no corresponding variant instead of unwrapping. Added a regression test (`default_permissions_does_not_panic_on_sparse_ids`) so this can't silently reappear.
+
 ## [0.16.16-apns.2] - 2026-08-06
 
 ### Fixed

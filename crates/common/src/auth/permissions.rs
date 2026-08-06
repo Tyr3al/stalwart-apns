@@ -240,7 +240,13 @@ impl Default for DefaultPermissions {
         };
 
         for permission_id in 0..Permission::COUNT {
-            let permission = Permission::from_id(permission_id as u16).unwrap();
+            // Permission ids are sparse, not sequential: upstream's own range and this fork's
+            // reserved blocks (see docs/xaps-integration.md) leave large gaps in between, so
+            // most ids in 0..COUNT have no corresponding variant. Skip them instead of
+            // unwrapping.
+            let Some(permission) = Permission::from_id(permission_id as u16) else {
+                continue;
+            };
             match permission {
                 Permission::Authenticate
                 | Permission::AuthenticateWithAlias
@@ -352,5 +358,39 @@ impl BuildPermissions for Permissions {
             permission.set(*p as usize);
         }
         permission
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DefaultPermissions;
+    use registry::schema::enums::Permission;
+
+    // Regression test for a full server startup panic: Permission ids are sparse (upstream's
+    // own range plus this fork's reserved blocks, see docs/xaps-integration.md, leave large
+    // gaps), so sweeping 0..Permission::COUNT must never assume every id resolves.
+    #[test]
+    fn default_permissions_does_not_panic_on_sparse_ids() {
+        let permissions = DefaultPermissions::default();
+
+        for role in [
+            &permissions.user,
+            &permissions.group,
+            &permissions.tenant,
+            &permissions.superuser,
+        ] {
+            assert!(!role.is_empty());
+        }
+
+        for permission in [
+            Permission::SysXapsGet,
+            Permission::SysXapsQuery,
+            Permission::SysXapsUpdate,
+        ] {
+            assert!(
+                permissions.superuser.contains(&permission),
+                "{permission:?} should default onto the superuser role"
+            );
+        }
     }
 }
