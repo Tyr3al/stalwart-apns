@@ -2178,9 +2178,11 @@ pub enum Permission {
     SysWebHookUpdate = 656,
     SysWebHookDestroy = 657,
     SysWebHookQuery = 658,
-    SysXapsGet = 660,
-    SysXapsQuery = 661,
-    SysXapsUpdate = 662,
+    // NOTE(xaps-fork): reserved fork block, see docs/xaps-integration.md ("Fork numbering" section) —
+    // do not renumber into upstream's sequential range.
+    SysXapsGet = 9000,
+    SysXapsQuery = 9001,
+    SysXapsUpdate = 9002,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

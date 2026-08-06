@@ -8896,14 +8896,16 @@ impl EnumImpl for Permission {
             656 => Some(Permission::SysWebHookUpdate),
             657 => Some(Permission::SysWebHookDestroy),
             658 => Some(Permission::SysWebHookQuery),
-            660 => Some(Permission::SysXapsGet),
-            661 => Some(Permission::SysXapsQuery),
-            662 => Some(Permission::SysXapsUpdate),
+            9000 => Some(Permission::SysXapsGet),
+            9001 => Some(Permission::SysXapsQuery),
+            9002 => Some(Permission::SysXapsUpdate),
             _ => None,
         }
     }
 
-    const COUNT: usize = 663;
+    // NOTE(xaps-fork): must stay > the highest fork-reserved id (9002), see
+    // docs/xaps-integration.md ("Fork numbering" section). Sizes the per-role Permissions bitset.
+    const COUNT: usize = 9003;
 }
 
 impl serde::Serialize for Permission {

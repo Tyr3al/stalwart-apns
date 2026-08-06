@@ -244,6 +244,59 @@ device tokens masked in API responses (`mask_token`), path segments percent-deco
 - Topic currently comes from the `topic` config option; deriving it from the certificate subject UID
   (and making it non-overwritable) is a pending design decision.
 
+## Fork numbering: reserved numeric ID ranges
+
+Several registry/`trc` files under `crates/registry/src/schema/` and `crates/trc/src/event/` are marked
+`// This file is auto-generated. Do not edit directly.`. This fork has no access to the generator that
+produces them, so the XAPS additions in those files are hand-edited. Every numeric discriminant the XAPS
+feature adds lives in its own reserved block, kept clear of upstream's own sequential numbering, to avoid
+two classes of problems when merging future upstream changes:
+
+1. **Git merge conflicts** on every rebase, if upstream keeps appending its own new variants at the same
+   tail these files were edited at.
+2. **Silent ID collisions** — worse than a conflict, because these ids are persisted (permission bitmaps
+   per role, pickled registry `Property`/`ObjectType` data, `trc` event ids in logs). If upstream ever
+   reuses a number this fork already claimed, old stored data can silently resolve to the wrong
+   permission/property/event after an upgrade instead of failing to compile.
+
+Since nothing was deployed yet when this was done, the IDs could be moved for free. **Do not renumber
+anything below without re-reading this section** — once real data (roles, stored config, logs) references
+these numbers, moving them again becomes a breaking change for that data.
+
+### Reserved blocks
+
+| Enum | File(s) | Fork range | Notes |
+|---|---|---|---|
+| `Permission::SysXaps{Get,Query,Update}` | `crates/registry/src/schema/enums.rs`, `enums_impl.rs` | **9000–9002** | `Permission::COUNT` bumped to `9003`. Kept modest (not pushed to 60000+) because `Permission::COUNT` sizes a real per-role `Bitset` (`crates/common/src/auth/mod.rs`); at 9003 each `Permissions` bitset is ~9 KB (up from ~0.6 KB). Pushing to 65000 would cost ~65 KB per role instead. |
+| `ObjectType::Xaps` | `crates/registry/src/schema/properties.rs`, `properties_impl.rs` | **60000** | `ObjectType::COUNT` intentionally left untouched (unused anywhere outside its own impl; still correctly reflects upstream's own object count). |
+| `Property::Xaps*` (12 fields) | `crates/registry/src/schema/properties.rs`, `properties_impl.rs` | **60100–60111** | `Property::COUNT` intentionally left untouched, same reasoning as `ObjectType::COUNT`. |
+| `trc::EventType::Xaps(XapsEvent::*)` (4 events) | `crates/trc/src/event/enums.rs`, `enums_impl.rs` | **60200–60203** | `TOTAL_EVENT_COUNT` bumped to `60204`. Sizes a single global static array/bitset (`crates/trc/src/ipc/collector.rs`), so the memory cost of a large id (~70 KB, once, globally) is negligible — unlike `Permission::COUNT` this is not per-instance. |
+
+`Permission`, `Property`, `ObjectType`, and `trc::EventType` are all `#[repr(u16)]` (max value 65535), so
+none of these blocks are close to overflowing, and there's room for another such block if a future
+addition needs one — pick an unused thousand-block and add a row above.
+
+### Why the ranges differ in size
+
+`Permission::COUNT` directly sizes a bitset that's instantiated per role / access token
+(`PERMISSIONS_BITSET_SIZE` in `crates/common/src/auth/mod.rs`), so pushing it as high as the others would
+meaningfully bloat every role's in-memory permission set. `Property::COUNT`, `ObjectType::COUNT` are
+declared (required by the `EnumImpl` trait) but never read anywhere else in the codebase, and
+`trc::TOTAL_EVENT_COUNT` only sizes one single global static (`Collector.levels` and the interests
+bitset), not a per-instance value — so both were free to push far away from upstream's range at
+essentially no cost.
+
+### What to check after merging upstream changes
+
+- Re-run `grep -n "NOTE(xaps-fork)"` across the repo and confirm the reserved blocks above are still
+  untouched by the merge.
+- If upstream ever adds enough new `Permission`/`Property`/`ObjectType`/`trc::EventType` variants to
+  approach these reserved blocks (unlikely for a long time given upstream's current pace vs. the headroom
+  left), move the fork's block further out and update this table.
+- `cargo test -p services -p imap_proto --features xaps` should stay green; it exercises JWT/config
+  handling and the IMAP parser, not the numeric registry ids directly, so also spot-check
+  `Permission::SysXapsGet.to_id()` etc. still round-trip via `from_id()` if you touch these files again.
+
 ## Alternatives & risks
 
 - **Fallback/hybrid**: Phase-1's IMAP command plus an HTTP POST to the existing Go daemon (`/register`,
@@ -254,6 +307,9 @@ device tokens masked in API responses (`mask_token`), path segments percent-deco
   (`Object::deserialize_with_key`, `crates/store/src/registry/mod.rs:87`); appending fields to *existing* structs
   breaks unpickling of old data (silent reset to defaults). New singleton sections are safe (absent → default).
   This is why the config section is a new `xaps` singleton, not extra keys on `Imap`.
+- **Numeric ID collisions with upstream**: see [Fork numbering: reserved numeric ID ranges](#fork-numbering-reserved-numeric-id-ranges)
+  above — the `Permission`/`Property`/`ObjectType`/`trc::EventType` variants this fork adds live in
+  dedicated reserved blocks, not appended right after upstream's current max.
 - **Apple prerequisites & legal**: the extension is undocumented Apple behavior; a push certificate from an
   Apple ID that owns macOS Server (or a Developer account with the push entitlement) is required. Write a fresh
   Rust implementation from the observed wire protocol — don't copy the C/Go code verbatim (Apple's original

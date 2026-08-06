@@ -6,7 +6,9 @@
 
 // This file is auto-generated. Do not edit directly.
 
-pub const TOTAL_EVENT_COUNT: usize = 638;
+// NOTE(xaps-fork): must stay > the highest fork-reserved event id (60203),
+// see docs/xaps-integration.md ("Fork numbering" section). Sizes global per-event level/interest arrays.
+pub const TOTAL_EVENT_COUNT: usize = 60204;
 pub const TOTAL_METRIC_COUNT: usize = 367;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -580,11 +582,13 @@ pub enum PushSubscriptionEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
+// NOTE(xaps-fork): reserved fork block, see docs/xaps-integration.md ("Fork numbering" section) — do
+// not renumber into upstream's sequential range.
 pub enum XapsEvent {
-    Success = 634,
-    Scheduled = 635,
-    Error = 636,
-    DeviceTokenInactive = 637,
+    Success = 60200,
+    Scheduled = 60201,
+    Error = 60202,
+    DeviceTokenInactive = 60203,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

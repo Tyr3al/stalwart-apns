@@ -18,7 +18,9 @@
 > cargo build --release --features xaps
 > ```
 >
-> See [docs/xaps-integration.md](docs/xaps-integration.md) for the full integration plan and details.
+> See [docs/xaps-integration.md](docs/xaps-integration.md) for the full integration plan and details,
+> including the reserved numeric ID ranges this fork uses in the auto-generated registry/`trc` schema files
+> (important to know before merging upstream changes).
 
 <h3 align="center">
   Secure, scalable mail & collaboration server with comprehensive protocol support 🛡️ <br/>(IMAP, JMAP, SMTP, CalDAV, CardDAV, WebDAV)

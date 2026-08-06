@@ -250,7 +250,8 @@ pub enum ObjectType {
     TracingStore = 114,
     WebDav = 115,
     WebHook = 116,
-    Xaps = 117,
+    // NOTE(xaps-fork): reserved fork block, see docs/xaps-integration.md ("Fork numbering" section).
+    Xaps = 60000,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1177,18 +1178,20 @@ pub enum Property {
     WebsocketHeartbeat = 455,
     WebsocketThrottle = 456,
     WebsocketTimeout = 457,
-    XapsEnabled = 924,
-    XapsKeyFileP8 = 925,
-    XapsKeyId = 926,
-    XapsSandbox = 927,
-    XapsTeamId = 928,
-    XapsTopic = 929,
-    XapsDelay = 930,
-    XapsCheckInterval = 931,
-    XapsCertificateFilePem = 932,
-    XapsCertificateFilePemKey = 933,
-    XapsCertificateFileP12 = 934,
-    XapsCertificateFileP12Password = 935,
+    // NOTE(xaps-fork): reserved fork block, see docs/xaps-integration.md ("Fork numbering" section) —
+    // do not renumber into upstream's sequential range.
+    XapsEnabled = 60100,
+    XapsKeyFileP8 = 60101,
+    XapsKeyId = 60102,
+    XapsSandbox = 60103,
+    XapsTeamId = 60104,
+    XapsTopic = 60105,
+    XapsDelay = 60106,
+    XapsCheckInterval = 60107,
+    XapsCertificateFilePem = 60108,
+    XapsCertificateFilePemKey = 60109,
+    XapsCertificateFileP12 = 60110,
+    XapsCertificateFileP12Password = 60111,
     Zone = 749,
     ZoneIpV4 = 98,
     ZoneIpV6 = 99,
