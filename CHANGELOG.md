@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [0.16.16-apns.1] - 2026-08-06
 
 ### Added
 - Dashboard: "Push Notifications Sent" counter card on the Overview dashboard, tracking APNs pushes sent via XAPS.
