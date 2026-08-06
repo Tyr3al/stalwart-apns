@@ -452,6 +452,68 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
         }
     }
 
+    // NOTE(xaps-fork): the block above only seeds the 4 default roles once, when none exist
+    // yet. A deployment that already existed before this fork added new permissions (e.g.
+    // sysXaps*) never retroactively receives them -- and by design nobody can grant a
+    // permission they don't already hold, so there's no self-service way to fix it after the
+    // fact. Every boot, sync any permission DefaultPermissions newly computes for a given
+    // default role into that role's enabled_permissions, but only when the role has no
+    // existing opinion about it (present in neither enabled_permissions nor
+    // disabled_permissions), so a deliberate admin override is never touched.
+    {
+        let permissions = DefaultPermissions::default();
+        let default_roles: [(&str, &[Permission]); 4] = [
+            ("User", &permissions.user),
+            ("Group", &permissions.group),
+            ("Tenant Administrator", &permissions.tenant),
+            ("System Administrator", &permissions.superuser),
+        ];
+
+        for role in bp.list_infallible::<Role>().await {
+            let Some((_, source)) = default_roles
+                .iter()
+                .find(|(description, _)| *description == role.object.description)
+            else {
+                continue;
+            };
+
+            let missing: Vec<Permission> = source
+                .iter()
+                .filter(|permission| {
+                    !role.object.enabled_permissions.contains(permission)
+                        && !role.object.disabled_permissions.contains(permission)
+                })
+                .copied()
+                .collect();
+
+            if missing.is_empty() {
+                continue;
+            }
+
+            let old_object = role.object.clone();
+            let mut updated = role.object.clone();
+            for permission in missing {
+                updated.enabled_permissions.push(permission);
+            }
+
+            if !matches!(
+                bp.registry
+                    .write(RegistryWrite::update(
+                        role.id.id(),
+                        &updated.into(),
+                        &old_object.into(),
+                    ))
+                    .await?,
+                RegistryWriteResult::Success(_)
+            ) {
+                bp.build_error(
+                    role.id,
+                    "Failed to sync newly added permissions onto an existing default role",
+                );
+            }
+        }
+    }
+
     if bp
         .registry
         .count_object(ObjectType::NetworkListener)

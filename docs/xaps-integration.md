@@ -1,248 +1,89 @@
-# Integrating dovecot-xaps (iOS push email) into Stalwart
+# XAPS — iOS Mail push notifications (APNs)
 
-Status: plan approved — Phases 1–3 ✅ complete, plus all follow-ups (P12 auth, `trc` events, retry/backoff, devices API + self-service, test-push, capability guard, optional `xaps` cargo feature, webui pages, README fork notice).
+This fork adds native support for **XAPS** (`XAPPLEPUSHSERVICE`), the private IMAP extension iOS Mail uses to
+register for silent Apple Push Notification service (APNs) pushes on new mail — the same feature
+[`dovecot-xaps-plugin`](https://github.com/freswa/dovecot-xaps-plugin) provides for Dovecot, built directly into
+Stalwart instead of requiring a separate companion daemon.
 
-## Building
+## What it does
 
-XAPS is an **optional cargo feature** (`xaps`), wired like the store backends (e.g. `redis`): the feature is
-declared per-crate (`imap_proto`, `imap`, `common`, `email`, `services`) and forwarded by the `stalwart` binary,
-and it is **not** part of the default features.
+- When iOS Mail connects, it sends an `XAPPLEPUSHSERVICE` IMAP command with its device token and the mailboxes
+  it wants notifications for. Stalwart stores that registration and replies with the APNs topic to use.
+- On new mail delivered to **INBOX** (via SMTP, LMTP, or IMAP `APPEND`), Stalwart sends a silent background push
+  to every registered device for that account. The phone's existing connection to iCloud/APNs wakes up and the
+  Mail app polls the server — this mirrors exactly how Dovecot's plugin/daemon pair behaves, including only
+  pushing for `INBOX` (not other mailboxes).
+- Non-delivery changes (flags, moves) are batched and sent as a delayed, throttled notification rather than
+  immediately, to avoid flooding devices.
+- Everything lives in the normal Stalwart process and store — registrations are durable and cluster-safe, so
+  any node can register a device and any node can send its pushes; there's no separate daemon or JSON file to
+  manage.
+- Registered devices can be viewed and managed from the admin panel (**Push → Devices**) or by end users
+  themselves (**My Account → My Devices**), including a "send test push" button to verify delivery without
+  waiting for new mail.
+
+`XAPPLEPUSHSERVICE` is undocumented, unofficial Apple/iOS Mail behavior — it isn't a public API, so it could
+change or stop working in a future iOS release without notice. It works today.
+
+## Prerequisites
+
+You need a valid **Apple Push Notification service (APNs) credential** before this does anything useful. This
+is an external requirement from Apple — Stalwart cannot substitute for it. One of:
+
+- A push certificate obtained via a **macOS Server** purchase, or
+- An **Apple Developer Program** membership with the push entitlement, provisioned for the mail topic you'll
+  configure (typically `com.apple.mobilemail`, unless you're using a custom topic).
+
+Without this, devices can still register, but no pushes will ever be delivered.
+
+## Enabling the feature
+
+XAPS is an optional Cargo feature (`xaps`), not part of the default build. The published Docker images for this
+fork are already built with it — most users don't need to do anything here. If you're building from source
+yourself:
 
 ```sh
-# without XAPS (default)
+# without XAPS
 cargo build --release
 
 # with XAPS
 cargo build --release --features xaps
 ```
 
-`cargo test -p stalwart --features xaps` runs the XAPS unit tests (`apns.rs`, `parser/xapple.rs`).
+## Configuring APNs
 
-Notes:
-- The registry config section (`x:Xaps` singleton, `SysXaps*` permissions) and the `PrincipalField`/data-model
-  bits are always present — same as the redis store config being in the schema regardless of the `redis`
-  feature — but without the `xaps` feature the server has no `XAPPLEPUSHSERVICE` capability/command, no APNs
-  sender, and no XAPS config parsing.
-- Requires the `push_notifications` role at runtime (same as WebPush) and `xaps.enabled`.
+In the admin panel, go to **Settings → Push → Apple Push (XAPS)**.
 
-## Background: what the original system does
+**Settings**
+| Field | Description |
+|---|---|
+| Enabled | Turns XAPS on. Devices won't be able to register, and no pushes will be sent, until this is on *and* a topic + authentication method are configured below. |
+| APNs Topic | Must match the topic your APNs credentials were issued for (typically `com.apple.mobilemail`). Returned to iOS Mail during registration. |
+| Use Sandbox | Send to Apple's sandbox APNs endpoint instead of production — only relevant if you're using development/sandbox credentials. |
+| Delayed Notification Delay (s) | How long to hold non-new-message changes (flags, moves) before sending a batched notification. Default 30s. |
+| Delayed Notification Check Interval (s) | How often the delayed-notification queue is checked. Default 20s. |
 
-**`dovecot-xaps-plugin`** (C, two dovecot plugins):
-1. **`xaps-imap-plugin.c`** — adds the `XAPPLEPUSHSERVICE` IMAP capability (pre-LOGIN, in the greeting) and a
-   command of the same name. iOS Mail sends:
-   ```
-   XAPPLEPUSHSERVICE aps-version 2 aps-account-id <uuid> aps-device-token <token>
-                     aps-subtopic com.apple.mobilemail mailboxes (INBOX Notes)
-   ```
-   The plugin POSTs `{"ApsAccountId","ApsDeviceToken","ApsSubtopic","Username","Mailboxes"}` as JSON to the
-   daemon's `/register`, gets back the **aps-topic** (certificate subject UID), and replies
-   `* XAPPLEPUSHSERVICE aps-version 2 aps-topic <topic>` + `OK XAPPLEPUSHSERVICE completed.`
-2. **`xaps-push-notification-plugin.c`** — a dovecot *push-notification driver* fired on delivery (LDA/LMTP).
-   On every message event it POSTs `{"Username","Mailbox","Events":["MessageNew",…]}` to the daemon's `/notify`.
+**APNs Credentials** — configure exactly one authentication method. If more than one is filled in, token auth
+wins over PEM, which wins over P12.
 
-**`dovecot-xaps-daemon`** (Go, ~700 LOC total):
-- `internal/socket.go` — HTTP server, two routes: `/register` (validates subtopic == `com.apple.mobilemail`,
-  stores the registration, returns the topic) and `/notify` (lowercases username, **ignores everything except
-  `INBOX`**, looks up registrations containing `INBOX`, sends one APNs push per device, deletes the registration
-  on APNs `410`).
-- `internal/apns.go` — APNs client (`sideshow/apns2`), payload always `{"aps":{"account-id":"<accountId>"}}`,
-  `PushType=background`; auth via P12 cert, PEM cert, or token (P8 key + keyId + teamId); topic from cert subject
-  or config; delay-map throttles non-`MessageNew` events (30 s delay, 20 s check).
-- `internal/database/database.go` — JSON file keyed `username → account_id → {device_token, mailboxes,
-  registration_time}`; atomic write, 15-min flush, 30-day stale-registration cleanup.
+| Method | Fields |
+|---|---|
+| Token (recommended) | Authentication Key (P8), Key ID, Team ID |
+| Certificate (PEM) | Client Certificate (PEM), Client Certificate Key (PEM) |
+| Certificate (P12) | Client Certificate (P12, base64), Client Certificate P12 Password (leave empty if the P12 isn't password-protected) |
 
-The point: the phone's *existing* iCloud connection gets a silent push; it then polls the server.
+Note on P12: only legacy PBES1 (SHA1+3DES / SHA1+RC2-40) encrypted key bags are supported — the same limitation
+the original Go daemon had. P12 files exported with OpenSSL 3.x's PBES2/AES default will be rejected; re-export
+with legacy encryption, or use the PEM or token method instead.
 
-## Target architecture in Stalwart (best case: both components in-process)
+Saving with XAPS enabled but no topic or no valid authentication method configured is rejected with a
+validation error explaining what's missing.
 
-```
-iOS Mail ──IMAP──► stalwart imap service
-                    │  XAPPLEPUSHSERVICE cmd
-                    ▼
-              registrations ──store (durable, cluster-safe)──► push manager
-                                                                   │ EmailPush event
-SMTP/LMTP/IMAP APPEND ──► email_ingest ──► broadcast_push_notification
-                                                                   ▼
-                                                       APNs sender (reqwest/http2)
-                                                                   │
-                                                              Apple APNs
-```
+### One more thing to check
 
-Everything in one process — **no HTTP endpoints `/register` / `/notify`**. The IMAP handler writes registrations
-to the store directly; the push manager sends APNs directly. The daemon's single-node JSON file is replaced by
-per-account durable store data (same pattern as JMAP WebPush subscriptions), which also fixes the daemon's
-multi-node weakness.
-
-| Concern | Original component | Stalwart equivalent |
-|---|---|---|
-| IMAP extension + registration | `xaps-imap-plugin.c` | new op handler in `crates/imap` + `imap-proto` |
-| Registration persistence | `database.go` (JSON file) | per-account store property (`PrincipalField::XapsRegistrations`) |
-| New-mail → push | `xaps-push-notification-plugin.c` + `/notify` | branch in push manager's `Event::Push` handler |
-| APNs transport | `apns.go` + apns2 lib | new `apns` module, reqwest + rustls + ES256 JWT |
-
-## Integration point A — IMAP `XAPPLEPUSHSERVICE` (the "plugin")
-
-All confirmed against the current code:
-
-1. **Command enum**: add `XApplePushService` to `Command` — `crates/imap-proto/src/lib.rs:16-81`.
-2. **Name→variant map**: `"XAPPLEPUSHSERVICE" => Command::XApplePushService` in the `tiny_map!` —
-   `crates/imap-proto/src/parser/mod.rs:40-85`.
-3. **⚠️ Command length cap**: stalwart caps command names at **15 chars**
-   (`crates/imap-proto/src/receiver.rs:181-186`); `XAPPLEPUSHSERVICE` is **17**. Bump the `push_checked(ch, 15)`
-   limit to a const (32). Nothing else assumes 15; RFC 3501 imposes no such limit.
-4. **Argument parsing**: the tokenizer yields `Vec<Token>` where `(`/`)` are `ParenthesisOpen/Close`
-   (`receiver.rs:218-311`), so the command's key/value pairs + `mailboxes (...)` list arrive as a generic token
-   stream. New `parser/xapple.rs` parses them (mirrors `parse_xapplepush()` in `xaps-imap-plugin.c`).
-5. **Dispatch**: arm in `ingest()` — `crates/imap/src/core/client.rs:96-255` — calling a new
-   `handle_xapple_push_service()` in a new `crates/imap/src/op/xapple.rs` (registered in `op/mod.rs`).
-6. **Auth gating**: add `Command::XApplePushService` to the authenticated bucket in `is_allowed()` —
-   `crates/imap/src/core/client.rs:364-395` (mirror `Command::GetJmapAccess` at `:386`).
-7. **Capability**: `Capability::XApplePushService` in the enum + `serialize()` + the **base (pre-auth)** list of
-   `all_capabilities()` (`crates/imap-proto/src/protocol/capability.rs:15-183`) — Apple advertises it in the
-   greeting; stalwart re-advertises post-LOGIN from the same list.
-8. **Reply**: `* XAPPLEPUSHSERVICE aps-version 2 aps-topic <topic>` + `OK XAPPLEPUSHSERVICE completed.`
-   (add the `Display` arm in `protocol/mod.rs:716-770`).
-
-Handler behavior (in-process, async, no HTTP round trip):
-- Load aps-topic (Phase 1: placeholder const; **Phase 2: config section derived from APNs credentials**).
-- Upsert registration `{aps_account_id, device_token, mailboxes, registered_at}` into the store
-  (per-account, keyed by `account_id` — better than the daemon's lowercased-username key; handles aliases).
-- Reply as above. This replaces both `/register` and the daemon's `AddRegistration`.
-
-## Integration point B — new-mail → push (the "daemon" half)
-
-- Every successful delivery fires `broadcast_push_notification(PushNotification::EmailPush(EmailPush{account_id,
-  email_id, change_id}))` right after the store commit — `crates/email/src/message/delivery.rs:202-212`
-  (covers SMTP/LMTP *and* IMAP APPEND through the same `email_ingest`).
-- It flows: `push_tx` → `spawn_push_router` (`crates/services/src/state_manager/manager.rs:25-189`) → push
-  manager `Event::Push` handler (`crates/services/src/state_manager/push.rs:312-393`).
-
-**Add a XAPS branch in the push manager's `Event::Push` handler**:
-1. Load XAPS registrations for `account_id` from the store.
-2. Resolve which mailbox the message landed in — `MessageData.mailboxes` (same read `build_email_push_object`
-   does, `crates/services/src/state_manager/email_push.rs:60-100`). Reproduce the original semantics exactly:
-   **push only if the message landed in `INBOX`** and the registration's mailbox list contains `INBOX`
-   (daemon `socket.go` `handleNotify`).
-3. For each matching registration, send APNs push `{"aps":{"account-id":"<aps_account_id>"}}` (async; failures
-   logged, never block delivery).
-4. On APNs `410` → delete the registration (daemon `apns.go`).
-
-**New module `crates/services/src/state_manager/apns.rs`**:
-- Transport: `reqwest` with `http2` (already a dep of `crates/services`, `Cargo.toml:36`; helper
-  `build_http_client` in `crates/utils/src/http.rs:14-35`). APNs mandates HTTP/2 (ALPN negotiates h2).
-- Auth mode 1 (**recommended, token**): ES256 JWT `{iss: teamId, iat}` with `kid` header signed with the P8 key —
-  stalwart already does ES256 JWT for WebPush VAPID (`crates/common/src/network/webpush.rs`); cache JWT, refresh
-  hourly (APNs rejects tokens > 1 h).
-- Auth mode 2 (cert): PEM client cert via rustls identity; P12 optional.
-- Endpoint `https://api.push.apple.com/3/device/<token>` (sandbox variant as config), headers `apns-topic`,
-  `apns-push-type: background`, `apns-priority: 5`, `apns-expiration`. Non-200: `410` → drop registration;
-  others → retry with backoff + log.
-
-## Integration point C — config & wiring
-
-- New config section (e.g. `xaps`) in the registry schema — `crates/registry/src/schema/{structs,enums,
-  properties}*.rs`. These files are marked "auto-generated, do not edit directly" — **confirm with the
-  maintainers how they are regenerated** before hand-editing (or hand-edit following the exact patterns of
-  existing singletons, as a fork).
-- Keys: `enabled`, APNs auth (prefer `keyFileP8` + `keyFileKeyId` + `keyFileTeamId` + `keyFileTopic`, plus
-  `certificateFilePem`/`P12` for cert auth), `sandbox` (dev APNs), `delay`/`checkInterval` (if Phase 3).
-- The push manager already runs only when role `push_notifications` is on
-  (`crates/services/src/state_manager/push.rs:45`, role def `crates/common/src/config/network.rs:84`); XAPS
-  piggybacks on it. No new listener/service needed.
-
-## Phased implementation
-
-**Phase 1 — IMAP extension + registration store** ✅ done
-1. Bump command-name cap (15 → 32); add `Command` variant, map entry, `Display` arm.
-2. Add capability (enum, wire string, base pre-auth list).
-3. Token parser `parser/xapple.rs` + `op/xapple.rs` handler + dispatch arm + auth gating.
-4. Registration persistence as per-account store property (`PrincipalField::XapsRegistrations`), incl. 30-day
-   staleness pruning (port `database.go` `cleanupRegistered`).
-5. Unit tests: parser (valid/invalid), capability presence, receiver command-name length.
-
-**Phase 2 — APNs sender + notify hook** ✅ done
-1. `apns.rs` transport with token auth (P8), JWT caching, `410` handling
-   (`SendResult::DeviceTokenInactive` → registration deleted).
-2. XAPS branch in the push manager (`push.rs`): accounts with device registrations are registered with the push
-   router via `PushServerRegister` (startup load + `Event::Update` on `PushServerUpdate` broadcast); on
-   `Event::Push` with an `EmailPush` for a registered account, `deliver_xaps_notifications` runs (INBOX-only,
-   reads `MessageData.mailboxes`, checks `INBOX_ID = 0`).
-3. Config: new `xaps` registry singleton (`ObjectType::Xaps`, `SysXaps{Get,Query,Update}` permissions,
-   `resources/schema/schema.json` admin-UI entry), runtime `XapsConfig` in `Core`, validation when `enabled`
-   without credentials. Replaces the Phase-1 placeholder aps-topic.
-4. Tests: JWT format/caching + sandbox host selection (`apns.rs`), plus the Phase-1 parser/upsert/prune tests.
-   Note: an **Apple push certificate is mandatory** (macOS Server purchase or paid Developer account) — a hard
-   external prerequisite of the whole XAPS idea.
-
-Design notes (Phase 2):
-- Requires the `push_notifications` role (same as WebPush) and `xaps.enabled`.
-- The router's per-account `is_push` flag is shared between WebPush and XAPS; unregistration is mutually
-  exclusive (an account is only unregistered when it has neither WebPush subscriptions nor XAPS devices) — see
-  `push.rs` `Event::Update`.
-- Registration changes propagate cluster-wide via `PushServerUpdate { broadcast: true }`; delivery is
-  shard-consistent (`jmap.push_total_shards` / `cluster_push_shard`), so exactly one node sends each push.
-
-**Phase 3 — fidelity & polish** ✅ done
-1. Delayed-notification throttling ported (the daemon's `delayedApns` map): non-delivery mailbox changes
-   (`StateChange` with `Email`/`Mailbox`/`Thread` types, excluding deliveries) schedule a batched push per
-   device, sent `delay` seconds later and checked every `checkInterval` — see `spawn_xaps_delayed` in
-   `apns.rs` and the `Event::Push` branch in `push.rs`. New-message pushes cancel pending entries for the
-   devices they reach (daemon parity).
-2. PEM client-certificate auth (`certificateFilePem` + `certificateFilePemKey`) as an alternative to token
-   auth; sandbox vs production endpoint already configurable. Config validation requires exactly one auth
-   method when enabled.
-3. `delay`/`checkInterval` config (defaults 30s/20s, same as `xapsd.yaml`) + admin-UI schema fields.
-
-Remaining (out of scope / external / needs the user):
-- Live end-to-end verification with a real Apple push certificate (macOS Server purchase or paid Developer
-  account) — the only untested part; everything else is unit-tested.
-- Multi-node/cluster verification (sharding/broadcast design is reasoned through, not run across nodes).
-- Mock-APNs end-to-end test harness (local HTTP/2 mock + real IMAP session).
-- Topic-from-certificate design decision (currently the `topic` config option is the source; deriving it
-  from the certificate subject UID is unimplemented).
-- P12 PBES2/AES support (would need the `openssl` dependency; legacy PBES1 only today, same as the Go daemon).
-- GitHub fork default branch (XAPS lives on `feature/xaps`; upstreaming to stalwartlabs is not planned).
-- Webui i18n is English-only (other locales fall back to the English defaults).
-
-Hardening applied (2026-08): test-push endpoint rate-limited (10/min/account, `KV_RATE_LIMIT_XAPS`),
-device tokens masked in API responses (`mask_token`), path segments percent-decoded server-side; the
-`not-configured` test status is returned only to the account owner or admins (accepted by design).
-
-Follow-ups already landed after Phase 3:
-- Dedicated `trc` `XapsEvent` type (Success/Scheduled/Error/DeviceTokenInactive, ids 634-637) replacing
-  `PushSubscriptionEvent` reuse; `TOTAL_EVENT_COUNT` bumped to 638; error events log at `Level::Error`.
-- APNs retry/backoff for transient failures: immediate and delayed sends retry with exponential backoff
-  (60s base, capped at 1h) up to `XAPS_MAX_ATTEMPTS = 5` total attempts, then drop with an error event.
-- P12 (PKCS#12) certificate auth (`certificateFileP12`, base64-encoded, + optional `certificateFileP12Password`)
-  as a third auth mode via the pure-Rust `p12` crate. Note: only legacy PBES1 (SHA1+3DES / SHA1+RC2-40)
-  encrypted key bags are supported — same limitation as the original Go daemon (crypto/pkcs12); PBES2/AES
-  files (OpenSSL 3.x default) are rejected with an error event. Auth methods are mutually exclusive by
-  precedence (token > PEM > P12), matching the daemon.
-- Management API for registered devices (`crates/http/src/api/xaps.rs`, feature-gated):
-  `GET /api/xaps/registrations` (all accounts with devices), `GET /api/xaps/registrations/<account>`,
-  `DELETE /api/xaps/registrations/<account>` (all devices), `DELETE /api/xaps/registrations/<account>/<apsAccountId>`.
-  `<account>` is a numeric account id or email address; permissions `SysAccountGet` (list) /
-  `SysAccountUpdate` (delete); deletes mirror the push-manager cleanup (untag + clear, `PushServerUpdate`
-  broadcast, `assert_value` against concurrent upserts) and stale registrations are pruned on read.
-
-Remaining (out of scope / external / needs the user):
-- Live end-to-end verification with a real Apple push certificate (macOS Server purchase or paid Developer
-  account) — the only untested part; everything else is unit-tested.
-- Multi-node/cluster verification (sharding/broadcast design is reasoned through, not run across nodes).
-- Mock-APNs end-to-end test harness (local HTTP/2 mock + real IMAP session).
-- Topic-from-certificate design decision (currently the `topic` config option is the source; deriving it
-  from the certificate subject UID is unimplemented).
-- P12 PBES2/AES support (would need the `openssl` dependency; legacy PBES1 only today, same as the Go daemon).
-- GitHub fork default branch (XAPS lives on `feature/xaps`; upstreaming to stalwartlabs is not planned).
-- Webui i18n is English-only (other locales fall back to the English defaults).
-
-Hardening applied (2026-08): test-push endpoint rate-limited (10/min/account, `KV_RATE_LIMIT_XAPS`),
-device tokens masked in API responses (`mask_token`), path segments percent-decoded server-side; the
-`not-configured` test status is returned only to the account owner or admins (accepted by design).
-- Webadmin console UI for the device API (the UI lives in the separate stalwart-webadmin repo; the
-  `camelCase` JSON contract is fixed by the `serialization_shape` test in `api/xaps.rs`).
-- Topic currently comes from the `topic` config option; deriving it from the certificate subject UID
-  (and making it non-overwritable) is a pending design decision.
+XAPS piggybacks on the same per-node `push_notifications` cluster role WebPush uses, which is **on by default**
+— you only need to look at this if you've deliberately disabled it on a node (cluster role settings), in which
+case that node won't send XAPS pushes either.
 
 ## Fork numbering: reserved numeric ID ranges
 
@@ -297,25 +138,3 @@ essentially no cost.
 - `cargo test -p services -p imap_proto --features xaps` should stay green; it exercises JWT/config
   handling and the IMAP parser, not the numeric registry ids directly, so also spot-check
   `Permission::SysXapsGet.to_id()` etc. still round-trip via `from_id()` if you touch these files again.
-
-## Alternatives & risks
-
-- **Fallback/hybrid**: Phase-1's IMAP command plus an HTTP POST to the existing Go daemon (`/register`,
-  `/notify`) is a small subset of this plan, but keeps two processes and loses multi-node/durability. Not
-  recommended as the end state.
-- **15-char command cap bump**: contained change; must not break the 128-char tag path or existing tests.
-- **Registry pickle backward-compat**: registry config objects are stored pickled
-  (`Object::deserialize_with_key`, `crates/store/src/registry/mod.rs:87`); appending fields to *existing* structs
-  breaks unpickling of old data (silent reset to defaults). New singleton sections are safe (absent → default).
-  This is why the config section is a new `xaps` singleton, not extra keys on `Imap`.
-- **Numeric ID collisions with upstream**: see [Fork numbering: reserved numeric ID ranges](#fork-numbering-reserved-numeric-id-ranges)
-  above — the `Permission`/`Property`/`ObjectType`/`trc::EventType` variants this fork adds live in
-  dedicated reserved blocks, not appended right after upstream's current max.
-- **Apple prerequisites & legal**: the extension is undocumented Apple behavior; a push certificate from an
-  Apple ID that owns macOS Server (or a Developer account with the push entitlement) is required. Write a fresh
-  Rust implementation from the observed wire protocol — don't copy the C/Go code verbatim (Apple's original
-  dovecot patches are APSL; the MIT reimplementations can inform behavior but should be re-derived).
-- **Behavioral fidelity**: original only pushes for `INBOX` deliveries to devices that registered `INBOX`;
-  replicate exactly to avoid surprising users.
-- **Cluster behavior**: registrations in the store mean any node can serve the IMAP command and any node can
-  send pushes — strictly better than the original.

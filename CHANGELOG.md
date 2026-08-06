@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.16-apns.2] - 2026-08-06
+
+### Fixed
+- Permissions: deployments that existed before this fork added the `sysXaps*` permissions never retroactively received them on their default roles (only a brand-new install's bootstrap seeded them), and since granting a permission you don't already hold is (correctly) forbidden, there was no self-service way to fix it after the fact. Every boot now syncs any permission `DefaultPermissions` newly computes for a given default role (User/Group/Tenant Administrator/System Administrator) into that role, but only where the role has no existing opinion about it (present in neither `enabledPermissions` nor `disabledPermissions`), so a deliberate admin override is never touched.
+
 ## [0.16.16-apns.1] - 2026-08-06
 
 ### Added
