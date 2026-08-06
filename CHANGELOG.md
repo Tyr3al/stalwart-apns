@@ -5,23 +5,23 @@ All notable changes to this project will be documented in this file. This projec
 ## [0.16.16-apns.3] - 2026-08-07
 
 ### Fixed
-- **Critical: server failed to start** (`panicked at crates/common/src/auth/permissions.rs:243: called \`Option::unwrap()\` on a \`None\` value`). `DefaultPermissions::default()` swept `0..Permission::COUNT` and unwrapped `Permission::from_id()` for every id, assuming a dense range — but permission ids are sparse (upstream's own range plus this fork's reserved blocks leave large gaps, e.g. nothing is assigned between roughly 620 and 9000), so this always panicked on the first gap id. It happened to never run on an already-populated deployment before 0.16.16-apns.2, since it was previously only reachable from the empty-database bootstrap path; the 0.16.16-apns.2 fix made it run on every boot, which is what surfaced this pre-existing bug. The sweep now skips ids with no corresponding variant instead of unwrapping. Added a regression test (`default_permissions_does_not_panic_on_sparse_ids`) so this can't silently reappear.
+- Server failed to start (`Permission::from_id` unwrap panic) because the default-permissions bootstrap swept a sparse id range as if it were dense.
 
 ## [0.16.16-apns.2] - 2026-08-06
 
 ### Fixed
-- Permissions: deployments that existed before this fork added the `sysXaps*` permissions never retroactively received them on their default roles (only a brand-new install's bootstrap seeded them), and since granting a permission you don't already hold is (correctly) forbidden, there was no self-service way to fix it after the fact. Every boot now syncs any permission `DefaultPermissions` newly computes for a given default role (User/Group/Tenant Administrator/System Administrator) into that role, but only where the role has no existing opinion about it (present in neither `enabledPermissions` nor `disabledPermissions`), so a deliberate admin override is never touched.
+- Pre-existing deployments never received the new `sysXaps*` permissions on their default roles; they're now synced in on every boot.
 
 ## [0.16.16-apns.1] - 2026-08-06
 
 ### Added
-- Dashboard: "Push Notifications Sent" counter card on the Overview dashboard, tracking APNs pushes sent via XAPS.
+- "Push Notifications Sent" counter card on the Overview dashboard.
 
 ### Changed
-- WebUI: default `resource_url` for fresh installs now points at [Tyr3al/webui-apns](https://github.com/Tyr3al/webui-apns) releases instead of upstream `stalwartlabs/webui`, so new deployments bootstrap with the XAPS device-management UI.
+- Default WebUI `resource_url` now points at [Tyr3al/webui-apns](https://github.com/Tyr3al/webui-apns) instead of upstream `stalwartlabs/webui`.
 
 ### Fixed
-- WebUI: `/api/schema` could panic the HTTP worker (`InvalidHeaderValue`, surfacing as a 502) on a cold load, because the embedded schema hash resource had a trailing newline that ended up in the `Location` redirect header. The hash is now trimmed defensively regardless of the resource file's exact bytes.
+- `/api/schema` could panic the HTTP worker on a cold load due to a trailing newline in the embedded hash resource.
 
 ## [0.16.16] - 2026-08-02
 
