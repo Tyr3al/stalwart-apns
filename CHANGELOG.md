@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file. This projec
 
 ### Fixed
 - Server failed to start (`Permission::from_id` unwrap panic) because the default-permissions bootstrap swept a sparse id range as if it were dense.
+- XAPS permissions were missing from the role editor's permission catalogue.
+- "My Devices" appeared in a separate top-level section instead of the existing Account menu.
 
 ## [0.16.16-apns.2] - 2026-08-06
 

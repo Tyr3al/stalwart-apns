@@ -19,7 +19,7 @@ Stalwart instead of requiring a separate companion daemon.
   any node can register a device and any node can send its pushes; there's no separate daemon or JSON file to
   manage.
 - Registered devices can be viewed and managed from the admin panel (**Push → Devices**) or by end users
-  themselves (**My Account → My Devices**), including a "send test push" button to verify delivery without
+  themselves (**Account → My Devices**), including a "send test push" button to verify delivery without
   waiting for new mail.
 
 `XAPPLEPUSHSERVICE` is undocumented, unofficial Apple/iOS Mail behavior — it isn't a public API, so it could
