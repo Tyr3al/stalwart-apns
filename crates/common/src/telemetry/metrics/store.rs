@@ -78,6 +78,8 @@ impl MetricsStore for Store {
                 MetricType::IncomingReportDmarcReportWithWarnings,
                 MetricType::IncomingReportTlsReport,
                 MetricType::IncomingReportTlsReportWithWarnings,
+                #[cfg(feature = "xaps")]
+                MetricType::XapsSuccess,
             ] {
                 let reading = Collector::read_metric_counter(event.event_id());
                 if reading > 0 {

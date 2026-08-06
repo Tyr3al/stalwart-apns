@@ -5205,6 +5205,7 @@ impl MetricType {
             b"telemetry.journal-error" => MetricType::TelemetryJournalError,
             b"tls.handshake-error" => MetricType::TlsHandshakeError,
             b"user.count" => MetricType::UserCount,
+            b"xaps.success" => MetricType::XapsSuccess,
         }
         .copied()
     }
@@ -5590,6 +5591,7 @@ impl MetricType {
             MetricType::TelemetryJournalError => "telemetry.journal-error",
             MetricType::TlsHandshakeError => "tls.handshake-error",
             MetricType::UserCount => "user.count",
+            MetricType::XapsSuccess => "xaps.success",
         }
     }
 
@@ -5962,6 +5964,7 @@ impl MetricType {
             MetricType::TelemetryJournalError => 335,
             MetricType::TlsHandshakeError => 336,
             MetricType::UserCount => 25,
+            MetricType::XapsSuccess => 60300,
         }
     }
 
@@ -6334,6 +6337,7 @@ impl MetricType {
             335 => Some(MetricType::TelemetryJournalError),
             336 => Some(MetricType::TlsHandshakeError),
             25 => Some(MetricType::UserCount),
+            60300 => Some(MetricType::XapsSuccess),
             _ => None,
         }
     }
@@ -6680,6 +6684,7 @@ impl MetricType {
             MetricType::TelemetryPrometheusExporterError => 538,
             MetricType::TelemetryJournalError => 534,
             MetricType::TlsHandshakeError => 544,
+            MetricType::XapsSuccess => 60200,
             _ => usize::MAX,
         }
     }
@@ -7065,6 +7070,7 @@ impl MetricType {
             MetricType::TelemetryJournalError => "Journal collector error",
             MetricType::TlsHandshakeError => "TLS handshake error",
             MetricType::UserCount => "Total number of users",
+            MetricType::XapsSuccess => "APNs notifications sent",
         }
     }
 
@@ -7419,7 +7425,8 @@ impl MetricType {
             | MetricType::TelemetryOtelMetricsExporterError
             | MetricType::TelemetryPrometheusExporterError
             | MetricType::TelemetryJournalError
-            | MetricType::TlsHandshakeError => "count",
+            | MetricType::TlsHandshakeError
+            | MetricType::XapsSuccess => "count",
             MetricType::DomainCount => "domains",
             MetricType::QueueCount => "messages",
             MetricType::DeliveryTotalTime
@@ -7809,6 +7816,7 @@ impl MetricType {
             MetricType::TelemetryJournalError,
             MetricType::TlsHandshakeError,
             MetricType::UserCount,
+            MetricType::XapsSuccess,
         ]
     }
 }

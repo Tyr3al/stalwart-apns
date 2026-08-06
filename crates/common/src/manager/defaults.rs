@@ -60,7 +60,7 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                     enabled: true,
                     #[cfg(not(feature = "dev_mode"))]
                     resource_url:
-                        "https://github.com/stalwartlabs/webui/releases/latest/download/webui.zip"
+                        "https://github.com/Tyr3al/webui-apns/releases/latest/download/webui.zip"
                             .into(),
                     #[cfg(feature = "dev_mode")]
                     resource_url: "file:///Users/me/code/webui/.ignore/webui.zip".into(),

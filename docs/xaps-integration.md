@@ -271,6 +271,7 @@ these numbers, moving them again becomes a breaking change for that data.
 | `ObjectType::Xaps` | `crates/registry/src/schema/properties.rs`, `properties_impl.rs` | **60000** | `ObjectType::COUNT` intentionally left untouched (unused anywhere outside its own impl; still correctly reflects upstream's own object count). |
 | `Property::Xaps*` (12 fields) | `crates/registry/src/schema/properties.rs`, `properties_impl.rs` | **60100–60111** | `Property::COUNT` intentionally left untouched, same reasoning as `ObjectType::COUNT`. |
 | `trc::EventType::Xaps(XapsEvent::*)` (4 events) | `crates/trc/src/event/enums.rs`, `enums_impl.rs` | **60200–60203** | `TOTAL_EVENT_COUNT` bumped to `60204`. Sizes a single global static array/bitset (`crates/trc/src/ipc/collector.rs`), so the memory cost of a large id (~70 KB, once, globally) is negligible — unlike `Permission::COUNT` this is not per-instance. |
+| `trc::MetricType::XapsSuccess` | `crates/trc/src/event/enums.rs`, `enums_impl.rs` | **60300** | Separate ID space from `EventType` (`MetricType` has no `COUNT` constant sizing an array — it's matched by value, not indexed — so no size bump needed). Backs the "Push Notifications Sent" dashboard card; `event_id()` points it at `EventType::Xaps(XapsEvent::Success)` (60200) so it counts the same underlying event. |
 
 `Permission`, `Property`, `ObjectType`, and `trc::EventType` are all `#[repr(u16)]` (max value 65535), so
 none of these blocks are close to overflowing, and there's room for another such block if a future

@@ -99,16 +99,21 @@ impl ManagementApi for Server {
                 let (_in_flight, access_token) = self.authenticate_headers(req, session).await?;
                 static SCHEMA_JSON: &[u8] =
                     include_bytes!("../../../../resources/schema/schema.json.gz");
-                const SCHEMA_HASH: &str =
-                    include_str!("../../../../resources/schema/schema.json.sha256");
+                // .trim() defensively: this is embedded via include_str!, so a stray
+                // trailing newline in the checked-in resource file (however it gets
+                // regenerated) would otherwise end up in a Location header value,
+                // which the http crate rejects (InvalidHeaderValue) instead of
+                // silently stripping.
+                let schema_hash: &str =
+                    include_str!("../../../../resources/schema/schema.json.sha256").trim();
 
-                if path.get(1).is_some_and(|hash| hash == &SCHEMA_HASH) {
+                if path.get(1).is_some_and(|hash| hash == &schema_hash) {
                     Ok(Resource::new("application/json", SCHEMA_JSON.to_vec())
                         .into_http_response()
                         .with_immutable_cache()
                         .with_header(CONTENT_ENCODING, "gzip"))
                 } else {
-                    Ok(HttpResponse::redirect(format!("/api/schema/{SCHEMA_HASH}")))
+                    Ok(HttpResponse::redirect(format!("/api/schema/{schema_hash}")))
                 }
             }
             #[cfg(feature = "xaps")]

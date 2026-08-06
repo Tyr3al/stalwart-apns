@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Dashboard: "Push Notifications Sent" counter card on the Overview dashboard, tracking APNs pushes sent via XAPS.
+
+### Changed
+- WebUI: default `resource_url` for fresh installs now points at [Tyr3al/webui-apns](https://github.com/Tyr3al/webui-apns) releases instead of upstream `stalwartlabs/webui`, so new deployments bootstrap with the XAPS device-management UI.
+
+### Fixed
+- WebUI: `/api/schema` could panic the HTTP worker (`InvalidHeaderValue`, surfacing as a 502) on a cold load, because the embedded schema hash resource had a trailing newline that ended up in the `Location` redirect header. The hash is now trimmed defensively regardless of the resource file's exact bytes.
+
 ## [0.16.16] - 2026-08-02
 
 If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
