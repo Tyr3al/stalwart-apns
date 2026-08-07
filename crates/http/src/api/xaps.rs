@@ -13,10 +13,10 @@
 //! - `DELETE /api/xaps/registrations/<account>/<apsAccountId>` remove one device (admin or self)
 //! - `POST   /api/xaps/test/<account>/<apsAccountId>`      send a test push to one device (admin or self)
 //!
-//! `<account>` is either a numeric account id or an email address. Requests
-//! for the authenticated user's own account are allowed without admin
-//! permissions (self-service); other accounts and the list-all endpoint
-//! require `SysAccountGet` (list) / `SysAccountUpdate` (delete).
+//! `<account>` is either a numeric account id, a JMAP account id, or an email
+//! address. Requests for the authenticated user's own account are allowed
+//! without admin permissions (self-service); other accounts and the list-all
+//! endpoint require `SysAccountGet` (list) / `SysAccountUpdate` (delete).
 
 use common::{
     KV_RATE_LIMIT_XAPS, Server,
@@ -34,7 +34,7 @@ use store::{
     write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
 };
 use trc::{AddContext, LimitEvent};
-use types::{collection::Collection, field::PrincipalField};
+use types::{collection::Collection, field::PrincipalField, id::Id};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -229,9 +229,9 @@ fn assert_self_or_admin(
     }
 }
 
-/// Resolves an account id from a numeric id or an email address / name.
+/// Resolves an account id from a numeric id, JMAP account id, or email address.
 async fn resolve_account_id(server: &Server, account: &str) -> trc::Result<u32> {
-    if let Ok(account_id) = account.parse::<u32>() {
+    if let Some(account_id) = parse_account_id(account) {
         return Ok(account_id);
     }
     server
@@ -239,6 +239,19 @@ async fn resolve_account_id(server: &Server, account: &str) -> trc::Result<u32> 
         .await
         .caused_by(trc::location!())?
         .ok_or_else(|| trc::ResourceEvent::NotFound.into_err())
+}
+
+/// Parses the two account-id representations exposed by Stalwart APIs.
+///
+/// The management API uses decimal document ids, while the JMAP session used
+/// by the account WebUI exposes the same id using Stalwart's canonical base32
+/// representation. Only canonical, unprefixed JMAP ids are accepted so an
+/// arbitrary account name is not silently interpreted as an id.
+fn parse_account_id(account: &str) -> Option<u32> {
+    account.parse::<u32>().ok().or_else(|| {
+        let id = account.parse::<Id>().ok()?;
+        (id.prefix_id() == 0 && id.as_string() == account).then(|| id.document_id())
+    })
 }
 
 async fn load_xaps_account(
@@ -401,6 +414,22 @@ mod tests {
         assert_eq!(mask_token("1234"), "****");
         assert_eq!(mask_token("12345678"), "****");
         assert_eq!(mask_token("1234567890abcdef"), "1234****cdef");
+    }
+
+    #[test]
+    fn parses_management_and_jmap_account_ids() {
+        assert_eq!(parse_account_id("42"), Some(42));
+
+        let jmap_id = Id::from(42_u32).as_string();
+        assert_eq!(parse_account_id(&jmap_id), Some(42));
+
+        assert_eq!(parse_account_id("A"), None);
+        assert_eq!(parse_account_id("a@example.org"), None);
+        assert_eq!(parse_account_id("abca"), None);
+        assert_eq!(
+            parse_account_id(&Id::from_parts(1, 42).as_string()),
+            None
+        );
     }
 
     #[test]
