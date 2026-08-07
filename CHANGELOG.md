@@ -28,6 +28,8 @@ rebases onto a newer upstream release. Release candidates leading up to a versio
 - Saving any Apple Push (XAPS) settings field always failed with "Invalid property" because the fork's hand-edited property table registered every field under an `xaps`-prefixed JSON key nothing ever sent.
 - APNs error events logged only the HTTP status code (always 400), discarding the JSON `reason` body (`BadDeviceToken`, `BadTopic`, etc.) that's the actual diagnostic.
 - Test push always failed with `BadDeviceToken` because the handler loaded the registration through the same function that masks the token for the public registrations list, sending APNs the literal masked placeholder instead of the real token.
+- `Dockerfile.fdb` pinned the FoundationDB client to an exact patch (`7.4.6`) instead of resolving the latest `7.4.x` release like `Dockerfile.build` already does.
+- `tests`, `crates/utils/proc-macros`, and `crates/trc/event-macro` were left on `0.16.16-apns.8` by every prior version bump; all local packages now report the same version.
 
 ## [0.16.16] - 2026-08-02
 

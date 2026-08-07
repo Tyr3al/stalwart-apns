@@ -1,6 +1,6 @@
 [package]
 name = "nlp"
-version = "0.16.16-apns.1-rc.1"
+version = "0.16.16-apns.1-rc.2"
 edition = "2024"
 
 [dependencies]
