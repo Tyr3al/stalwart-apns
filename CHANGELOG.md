@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.16-apns.6] - 2026-08-07
+
+### Fixed
+- APNs error events logged only the HTTP status code (always 400), discarding the JSON `reason` body (`BadDeviceToken`, `BadTopic`, etc.) that's the actual diagnostic.
+
 ## [0.16.16-apns.5] - 2026-08-07
 
 ### Fixed

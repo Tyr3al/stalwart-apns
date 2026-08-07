@@ -296,10 +296,15 @@ impl ApnsClient {
                     );
                     SendResult::DeviceTokenInactive
                 } else {
+                    // APNs returns a JSON body ({"reason": "BadDeviceToken", ...}) on error
+                    // responses that's the actual diagnostic -- the HTTP status alone (almost
+                    // always 400) doesn't say what was wrong.
+                    let body = response.text().await.unwrap_or_default();
                     trc::event!(
                         Xaps(XapsEvent::Error),
                         Details = format!("APNs request failed for account {account_id}"),
                         Code = status.as_u16(),
+                        Reason = body,
                     );
                     SendResult::Error
                 }

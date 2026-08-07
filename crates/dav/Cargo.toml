@@ -1,6 +1,6 @@
 [package]
 name = "dav"
-version = "0.16.16-apns.5"
+version = "0.16.16-apns.6"
 edition = "2024"
 
 [dependencies]
