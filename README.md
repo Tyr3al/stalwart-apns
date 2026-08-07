@@ -25,6 +25,10 @@
 > **This fork is under active development and has not had a stable release.** Versions tagged
 > `-rc.*` are release candidates, not finished releases. Run it against production mail data only
 > if you understand the risks and have working backups — data loss is possible.
+>
+> **A working Apple Push Notification service (APNs) credential is required for push to work at all** —
+> this is an external requirement from Apple, obtained outside of Stalwart. Without it, devices can still
+> register but no pushes will ever be delivered. See [XAPS Quickstart](#xaps-quickstart) below.
 
 <h3 align="center">
   Secure, scalable mail & collaboration server with comprehensive protocol support 🛡️ <br/>(IMAP, JMAP, SMTP, CalDAV, CardDAV, WebDAV)
@@ -161,6 +165,65 @@ Install Stalwart on your server by following the instructions for your platform:
 - [Docker](https://stalw.art/docs/install/platform/docker)
 
 All documentation is available at [stalw.art/docs](https://stalw.art/docs/install/get-started).
+
+## XAPS Quickstart
+
+Once the server is installed and running (see [Get Started](#get-started) above):
+
+1. You need a **working Apple Push Notification service (APNs) credential** before any of this does
+   anything — an external requirement from Apple, obtained outside of Stalwart. Getting one isn't covered
+   here yet; see [Prerequisites](docs/xaps-integration.md#prerequisites) for the general shape of what's
+   required.
+2. Log in to the admin panel and go to **Settings → Push → Apple Push (XAPS)**.
+3. Fill in:
+   - **APNs Topic** — the topic your push credential was issued for. This is **not** `com.apple.mobilemail`
+     in practice; it's a custom topic specific to your credential.
+   - **Authentication Key (P8)**, **Key ID**, **Team ID** — from your Apple Developer account (recommended,
+     token-based auth). Certificate-based (PEM/P12) auth is also supported; see the
+     [configuration table](docs/xaps-integration.md#configuring-apns) for the full field list.
+4. Toggle **Enabled** and save.
+5. Connect iOS/macOS Mail to the server. On the next new-mail delivery to **INBOX**, the device should receive
+   a silent push. Use **Settings → Push → Devices** (admin) or **Account → My Devices** (self-service) to
+   confirm the device registered, and the **Send test push** button to verify delivery without waiting for mail.
+
+See [docs/xaps-integration.md](docs/xaps-integration.md) for the full picture: how delayed/batched
+notifications work, the permission model, and P12 encryption caveats.
+
+## XAPS Troubleshooting
+
+### A device isn't receiving pushes
+
+The most reliable fix is to **disable and re-enable the mail account** in iOS/macOS Mail's account
+settings — this forces a fresh `XAPPLEPUSHSERVICE` registration, which clears up most cases of a stale or
+missing device registration.
+
+### "Settings → Push" isn't visible, or the XAPS fields are missing/greyed out
+
+This means the admin account you're logged in as belongs to a role without the `SysXapsGet` /
+`SysXapsQuery` / `SysXapsUpdate` permissions. On a fresh install, or on any restart of an existing
+deployment, the built-in **System Administrator** and **Tenant Administrator** roles get these permissions
+synced onto them automatically — so you shouldn't normally need to do anything. You'll hit this if your
+admin account uses a **renamed or fully custom role** that the automatic sync doesn't recognize (it only
+matches Stalwart's stock role names), since by design no role can grant itself a permission it doesn't
+already hold.
+
+To fix it, use Stalwart's built-in recovery/maintenance admin to bypass the permission system once:
+
+1. On the server host, set the environment variable `STALWART_RECOVERY_ADMIN=admin:<a-strong-one-off-password>`
+   (wherever you configure other `STALWART_*` variables — systemd unit, Docker Compose, env file) and restart
+   the server; this is only read at startup. The username doesn't need to match a real account.
+2. Log in to the admin panel with that username/password. This session has every permission, independent of
+   the roles database.
+3. Go to **Settings → Roles**, open the admin role you actually use, enable the three XAPS permissions
+   (listed under XAPS in the permission catalogue), and save.
+4. Log back in with your normal admin account — **Settings → Push → Apple Push (XAPS)** is now visible, and
+   the topic / key ID / team ID / P8 key fields can be filled in and saved as usual.
+5. Remove `STALWART_RECOVERY_ADMIN` and restart once more. Leaving it configured is a standing bypass of the
+   entire permission system and shouldn't be left in place.
+
+(In a pinch, you can skip step 3 and just fill in the topic/key ID/team ID/P8 key directly while logged in
+as the recovery admin — but your normal admin account still won't be able to see or edit that page
+afterward, so fixing the role is the durable solution.)
 
 ## Support
 
