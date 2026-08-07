@@ -9,6 +9,8 @@
  */
 
 use common::{Server, auth::AccessToken, telemetry::tracers::TraceEvents};
+#[cfg(feature = "xaps")]
+use email::push::xaps::XapsStats;
 use http_body_util::{StreamBody, combinators::BoxBody};
 use http_proto::*;
 use hyper::{
@@ -201,12 +203,16 @@ impl TelemetryApi for Server {
                 MetricType::QueueCount,
                 MetricType::UserCount,
                 MetricType::DomainCount,
+                #[cfg(feature = "xaps")]
+                MetricType::XapsDeviceCount,
             ] {
                 if metric_types.contains(&metric_type) {
                     let value = match metric_type {
                         MetricType::QueueCount => self.total_queued_messages().await?,
                         MetricType::UserCount => self.total_accounts().await? as u64,
                         MetricType::DomainCount => self.total_domains().await? as u64,
+                        #[cfg(feature = "xaps")]
+                        MetricType::XapsDeviceCount => self.total_xaps_devices().await?,
                         _ => unreachable!(),
                     };
                     Collector::update_gauge(metric_type, value);

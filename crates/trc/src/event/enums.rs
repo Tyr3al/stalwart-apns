@@ -1293,6 +1293,7 @@ pub enum MetricType {
     // NOTE(xaps-fork): reserved fork block, see docs/xaps-integration.md ("Fork numbering" section) — do
     // not renumber into upstream's sequential range.
     XapsSuccess = 60300,
+    XapsDeviceCount = 60301,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

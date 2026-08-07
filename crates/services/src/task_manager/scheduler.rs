@@ -15,6 +15,8 @@ use common::{
     BuildServer, Inner, LONG_1D_SLUMBER,
     config::{mailstore::spamfilter, telemetry::OtelMetrics},
 };
+#[cfg(feature = "xaps")]
+use email::push::xaps::XapsStats;
 use registry::{
     schema::{
         enums::{TaskSpamFilterMaintenanceType, TaskStoreMaintenanceType, TaskType},
@@ -336,6 +338,21 @@ pub fn spawn_task_scheduler(inner: Arc<Inner>) {
                                         Err(err) => {
                                             trc::error!(
                                                 err.details("Failed to obtain domain count")
+                                            );
+                                        }
+                                    }
+
+                                    #[cfg(feature = "xaps")]
+                                    match server.total_xaps_devices().await {
+                                        Ok(total) => {
+                                            Collector::update_gauge(
+                                                MetricType::XapsDeviceCount,
+                                                total,
+                                            );
+                                        }
+                                        Err(err) => {
+                                            trc::error!(
+                                                err.details("Failed to obtain XAPS device count")
                                             );
                                         }
                                     }

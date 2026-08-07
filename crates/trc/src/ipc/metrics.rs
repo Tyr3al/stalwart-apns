@@ -49,6 +49,7 @@ static SERVER_MEMORY: AtomicGauge = AtomicGauge::new(MetricType::ServerMemory);
 static QUEUE_COUNT: AtomicGauge = AtomicGauge::new(MetricType::QueueCount);
 static USER_COUNT: AtomicGauge = AtomicGauge::new(MetricType::UserCount);
 static DOMAIN_COUNT: AtomicGauge = AtomicGauge::new(MetricType::DomainCount);
+static XAPS_DEVICE_COUNT: AtomicGauge = AtomicGauge::new(MetricType::XapsDeviceCount);
 
 const CONN_SMTP_IN: usize = 0;
 const CONN_SMTP_OUT: usize = 1;
@@ -315,6 +316,7 @@ impl Collector {
             MetricType::SieveRequestTime => CONNECTION_METRICS[CONN_SIEVE].elapsed.average(),
             MetricType::UserCount => USER_COUNT.get() as f64,
             MetricType::DomainCount => DOMAIN_COUNT.get() as f64,
+            MetricType::XapsDeviceCount => XAPS_DEVICE_COUNT.get() as f64,
             _ => EVENT_COUNTERS.get(metric_type.event_id()) as f64,
         }
     }
@@ -325,6 +327,7 @@ impl Collector {
             MetricType::QueueCount => QUEUE_COUNT.set(value),
             MetricType::UserCount => USER_COUNT.set(value),
             MetricType::DomainCount => DOMAIN_COUNT.set(value),
+            MetricType::XapsDeviceCount => XAPS_DEVICE_COUNT.set(value),
             _ => {}
         }
     }

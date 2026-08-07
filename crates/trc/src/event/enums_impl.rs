@@ -5213,6 +5213,7 @@ impl MetricType {
             b"tls.handshake-error" => MetricType::TlsHandshakeError,
             b"user.count" => MetricType::UserCount,
             b"xaps.success" => MetricType::XapsSuccess,
+            b"xaps.device-count" => MetricType::XapsDeviceCount,
         }
         .copied()
     }
@@ -5599,6 +5600,7 @@ impl MetricType {
             MetricType::TlsHandshakeError => "tls.handshake-error",
             MetricType::UserCount => "user.count",
             MetricType::XapsSuccess => "xaps.success",
+            MetricType::XapsDeviceCount => "xaps.device-count",
         }
     }
 
@@ -5972,6 +5974,7 @@ impl MetricType {
             MetricType::TlsHandshakeError => 336,
             MetricType::UserCount => 25,
             MetricType::XapsSuccess => 60300,
+            MetricType::XapsDeviceCount => 60301,
         }
     }
 
@@ -6345,6 +6348,7 @@ impl MetricType {
             336 => Some(MetricType::TlsHandshakeError),
             25 => Some(MetricType::UserCount),
             60300 => Some(MetricType::XapsSuccess),
+            60301 => Some(MetricType::XapsDeviceCount),
             _ => None,
         }
     }
@@ -7078,6 +7082,7 @@ impl MetricType {
             MetricType::TlsHandshakeError => "TLS handshake error",
             MetricType::UserCount => "Total number of users",
             MetricType::XapsSuccess => "APNs notifications sent",
+            MetricType::XapsDeviceCount => "Total number of registered push devices",
         }
     }
 
@@ -7451,6 +7456,7 @@ impl MetricType {
             | MetricType::StoreBlobReadTime
             | MetricType::StoreBlobWriteTime => "milliseconds",
             MetricType::UserCount => "users",
+            MetricType::XapsDeviceCount => "devices",
         }
     }
 
@@ -7824,6 +7830,7 @@ impl MetricType {
             MetricType::TlsHandshakeError,
             MetricType::UserCount,
             MetricType::XapsSuccess,
+            MetricType::XapsDeviceCount,
         ]
     }
 }

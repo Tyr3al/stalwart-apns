@@ -64,6 +64,56 @@ impl XapsRegistrations {
     }
 }
 
+/// Backs the "Registered Devices" live dashboard metric. Mirrors
+/// `Server::total_accounts`/`total_domains` (`crates/common/src/storage/mod.rs`):
+/// an "expensive metric", meant to be refreshed periodically rather than on
+/// every request. Defined here rather than alongside those because `common`
+/// (which owns `Server`) doesn't depend on `email` (which owns
+/// `XapsRegistrations`), so this can't be an inherent method on `Server`.
+use trc::AddContext;
+
+pub trait XapsStats: Sync + Send {
+    fn total_xaps_devices(&self) -> impl std::future::Future<Output = trc::Result<u64>> + Send;
+}
+
+impl XapsStats for common::Server {
+    async fn total_xaps_devices(&self) -> trc::Result<u64> {
+        let account_ids = self
+            .document_ids(
+                u32::MAX,
+                types::collection::Collection::Principal,
+                types::field::PrincipalField::XapsRegistrations,
+            )
+            .await
+            .caused_by(trc::location!())?;
+        let current_time = store::write::now();
+        let mut total = 0u64;
+        for account_id in account_ids {
+            let Some(archive) = self
+                .store()
+                .get_value::<store::write::Archive<store::write::AlignedBytes>>(
+                    store::ValueKey::property(
+                        account_id,
+                        types::collection::Collection::Principal,
+                        0,
+                        types::field::PrincipalField::XapsRegistrations,
+                    ),
+                )
+                .await
+                .caused_by(trc::location!())?
+            else {
+                continue;
+            };
+            let mut registrations = archive
+                .deserialize::<XapsRegistrations>()
+                .caused_by(trc::location!())?;
+            registrations.prune(current_time);
+            total += registrations.registrations.len() as u64;
+        }
+        Ok(total)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

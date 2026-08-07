@@ -13,7 +13,7 @@ rebases onto a newer upstream release. Release candidates leading up to a versio
   - Configurable push settings (APNs topic, team ID, signing key, sandbox mode, delivery delay), with the required `sysXaps*` permissions synced onto existing roles automatically.
   - Admin "Push Devices" page listing every account's registered devices, with per-device delete, per-account remove-all, and a "Send test push" action.
   - Self-service "My Devices" page for users to manage their own registered devices.
-  - "Push Notifications Sent" counter card on the Overview dashboard.
+  - "Push Notifications Sent" counter card on the Overview and Delivery dashboards, and a live "Registered Devices" counter card on the Overview dashboard.
   - Push delivery attempts, including APNs' rejection reason on failure, are logged at Info level.
 - Bundled WebUI now points at [Tyr3al/webui-apns](https://github.com/Tyr3al/webui-apns), the fork's own frontend with the matching XAPS management UI, instead of upstream `stalwartlabs/webui`.
 
