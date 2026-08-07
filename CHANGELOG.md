@@ -9,25 +9,15 @@ rebases onto a newer upstream release. Release candidates leading up to a versio
 `-rc.<M>` and marked as a GitHub prerelease.
 
 ### Added
-- "Push Notifications Sent" counter card on the Overview dashboard.
-
-### Changed
-- Default WebUI `resource_url` now points at [Tyr3al/webui-apns](https://github.com/Tyr3al/webui-apns) instead of upstream `stalwartlabs/webui`.
-- Test push now sends the same silent background payload as a real delivery instead of a visible alert, since the shared XAPS topic isn't authorized for alert-type pushes.
-- A successful push (real or test) is now logged at Info level instead of Trace.
+- Apple Push Notification Service (XAPS) support for instant IMAP push to iOS/macOS Mail, compatible with the [dovecot-xaps-daemon](https://github.com/freswa/dovecot-xaps-daemon) protocol:
+  - Configurable push settings (APNs topic, team ID, signing key, sandbox mode, delivery delay), with the required `sysXaps*` permissions synced onto existing roles automatically.
+  - Admin "Push Devices" page listing every account's registered devices, with per-device delete, per-account remove-all, and a "Send test push" action.
+  - Self-service "My Devices" page for users to manage their own registered devices.
+  - "Push Notifications Sent" counter card on the Overview dashboard.
+  - Push delivery attempts, including APNs' rejection reason on failure, are logged at Info level.
+- Bundled WebUI now points at [Tyr3al/webui-apns](https://github.com/Tyr3al/webui-apns), the fork's own frontend with the matching XAPS management UI, instead of upstream `stalwartlabs/webui`.
 
 ### Fixed
-- `/api/schema` could panic the HTTP worker on a cold load due to a trailing newline in the embedded hash resource.
-- Pre-existing deployments never received the new `sysXaps*` permissions on their default roles; they're now synced in on every boot.
-- XAPS self-service device requests returned 404 because JMAP account ids were not accepted by the management endpoint.
-- Generic Docker images and CI release binaries omitted the `xaps` feature, causing all `/api/xaps/*` endpoints to return 404.
-- Server failed to start (`Permission::from_id` unwrap panic) because the default-permissions bootstrap swept a sparse id range as if it were dense.
-- XAPS permissions were missing from the role editor's permission catalogue.
-- "My Devices" appeared in a separate top-level section instead of the existing Account menu.
-- The sysXaps permission sync silently failed on every boot because it discarded the target role's real revision, always failing its concurrency check; bootstrap errors are now also logged instead of swallowed.
-- Saving any Apple Push (XAPS) settings field always failed with "Invalid property" because the fork's hand-edited property table registered every field under an `xaps`-prefixed JSON key nothing ever sent.
-- APNs error events logged only the HTTP status code (always 400), discarding the JSON `reason` body (`BadDeviceToken`, `BadTopic`, etc.) that's the actual diagnostic.
-- Test push always failed with `BadDeviceToken` because the handler loaded the registration through the same function that masks the token for the public registrations list, sending APNs the literal masked placeholder instead of the real token.
 - `Dockerfile.fdb` pinned the FoundationDB client to an exact patch (`7.4.6`) instead of resolving the latest `7.4.x` release like `Dockerfile.build` already does.
 - `tests`, `crates/utils/proc-macros`, and `crates/trc/event-macro` were left on `0.16.16-apns.8` by every prior version bump; all local packages now report the same version.
 
