@@ -405,11 +405,19 @@ async fn delete_xaps_registrations(
 /// Masks a device token so the full push credential is never exposed in API
 /// responses or the admin console, consistent with how other secrets are
 /// handled (e.g. MASKED_PASSWORD).
+///
+/// Valid device tokens are ASCII hex (enforced by the IMAP parser), but this
+/// masks by `char`s rather than bytes so it can never panic on a token that
+/// predates that validation and contains multi-byte UTF-8 -- slicing by byte
+/// offset would panic if the offset landed inside a multi-byte character.
 fn mask_token(token: &str) -> String {
-    if token.len() <= 8 {
+    let chars: Vec<char> = token.chars().collect();
+    if chars.len() <= 8 {
         "****".to_string()
     } else {
-        format!("{}****{}", &token[..4], &token[token.len() - 4..])
+        let prefix: String = chars[..4].iter().collect();
+        let suffix: String = chars[chars.len() - 4..].iter().collect();
+        format!("{prefix}****{suffix}")
     }
 }
 
@@ -422,6 +430,24 @@ mod tests {
         assert_eq!(mask_token("1234"), "****");
         assert_eq!(mask_token("12345678"), "****");
         assert_eq!(mask_token("1234567890abcdef"), "1234****cdef");
+    }
+
+    #[test]
+    fn mask_token_multibyte_utf8_does_not_panic() {
+        // Tokens registered before the IMAP parser started rejecting
+        // non-hex device tokens may contain arbitrary UTF-8, including
+        // multi-byte characters that straddle the byte offsets a naive
+        // `&token[..4]` slice would use.
+        assert_eq!(mask_token("abcé0123456789"), "abcé****6789");
+        // A string of 4-byte emoji: short enough to hit the "****" branch
+        // (<= 8 chars) even though it is far more than 8 bytes.
+        assert_eq!(mask_token("😀😀😀😀😀😀😀😀"), "****");
+        // Longer than 8 chars: must slice on char boundaries without
+        // panicking and must not split any individual emoji.
+        assert_eq!(
+            mask_token("😀😀😀😀😀😀😀😀😀😀"),
+            "😀😀😀😀****😀😀😀😀"
+        );
     }
 
     #[test]
