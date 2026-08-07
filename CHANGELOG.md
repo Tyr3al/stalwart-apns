@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.16-apns.8] - 2026-08-07
+
+### Fixed
+- Test push always failed with `BadDeviceToken` because the handler loaded the registration through the same function that masks the token for the public registrations list, sending APNs the literal masked placeholder instead of the real token.
+
 ## [0.16.16-apns.7] - 2026-08-07
 
 ### Changed

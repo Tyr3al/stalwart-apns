@@ -28,7 +28,9 @@ use hyper::Method;
 use percent_encoding::percent_decode_str;
 use registry::schema::{enums::Permission, prelude::Duration, structs::Rate};
 use serde::Serialize;
-use services::state_manager::apns::{ApnsClient, SendResult};
+use services::state_manager::apns::{
+    ApnsClient, SendResult, load_xaps_registrations as load_xaps_registrations_unmasked,
+};
 use store::{
     Serialize as _, ValueKey,
     write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
@@ -106,12 +108,18 @@ pub async fn handle_xaps_api_request(
             return Err(LimitEvent::TooManyRequests.into_err());
         }
 
-        // The device must be registered for this account.
-        let registrations = load_xaps_registrations(server, account_id)
+        // The device must be registered for this account. Uses the unmasked
+        // loader (same one the real push-delivery path uses) rather than
+        // this file's own load_xaps_registrations, which masks the device
+        // token for the public registrations list -- sending that masked
+        // placeholder to APNs as a "device token" always fails as
+        // BadDeviceToken, regardless of how valid the real token is.
+        let registrations = load_xaps_registrations_unmasked(server, account_id)
             .await
             .caused_by(trc::location!())?;
         let Some(registration) = registrations
             .into_iter()
+            .flat_map(|r| r.registrations)
             .find(|r| r.aps_account_id == device_id)
         else {
             return Err(trc::ResourceEvent::NotFound.into_err());
