@@ -3047,7 +3047,7 @@ impl EventType {
             EventType::Pop3(Pop3Event::RawInput) => Level::Trace,
             EventType::Pop3(Pop3Event::RawOutput) => Level::Trace,
             EventType::PushSubscription(PushSubscriptionEvent::Success) => Level::Trace,
-            EventType::Xaps(XapsEvent::Success) => Level::Trace,
+            EventType::Xaps(XapsEvent::Success) => Level::Info,
             EventType::Xaps(XapsEvent::Scheduled) => Level::Trace,
             EventType::Smtp(SmtpEvent::RawInput) => Level::Trace,
             EventType::Smtp(SmtpEvent::RawOutput) => Level::Trace,

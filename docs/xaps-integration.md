@@ -19,8 +19,9 @@ Stalwart instead of requiring a separate companion daemon.
   any node can register a device and any node can send its pushes; there's no separate daemon or JSON file to
   manage.
 - Registered devices can be viewed and managed from the admin panel (**Push → Devices**) or by end users
-  themselves (**Account → My Devices**), including a "send test push" button to verify delivery without
-  waiting for new mail.
+  themselves (**Account → My Devices**), including a "send test push" button that asks APNs to deliver the
+  same silent background notification as a new-message push. A successful test is accepted by APNs and causes
+  Mail to refresh; it does not display a visible alert.
 
 `XAPPLEPUSHSERVICE` is undocumented, unofficial Apple/iOS Mail behavior — it isn't a public API, so it could
 change or stop working in a future iOS release without notice. It works today.

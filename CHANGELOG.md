@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.16-apns.7] - 2026-08-07
+
+### Changed
+- Test push now sends the same silent background payload as a real delivery instead of a visible alert, since the shared XAPS topic isn't authorized for alert-type pushes; a successful send is now logged at Info level instead of Trace.
+
 ## [0.16.16-apns.6] - 2026-08-07
 
 ### Fixed

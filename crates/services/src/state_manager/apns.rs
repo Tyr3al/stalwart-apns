@@ -239,22 +239,16 @@ impl ApnsClient {
         .await
     }
 
-    /// Sends a visible (alert) test notification to a device, used by the
-    /// admin console to verify that push delivery is working.
-    pub async fn send_test_notification(&self, device_token: &str, account_id: &str) -> SendResult {
-        self.send(
-            device_token,
-            account_id,
-            serde_json::json!({
-                "aps": {
-                    "alert": { "title": "Stalwart", "body": "XAPS test push" },
-                    "account-id": account_id,
-                }
-            }),
-            "alert",
-            "10",
-        )
-        .await
+    /// Sends a test notification to a device using the same silent background
+    /// payload as a real XAPS delivery. Native Mail XAPS topics do not support
+    /// arbitrary visible alerts, so the test verifies that APNs accepts the
+    /// production notification format.
+    pub async fn send_test_notification(
+        &self,
+        device_token: &str,
+        account_id: &str,
+    ) -> SendResult {
+        self.send_notification(device_token, account_id).await
     }
 
     async fn send(

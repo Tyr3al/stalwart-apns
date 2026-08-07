@@ -1,6 +1,6 @@
 [package]
 name = "registry"
-version = "0.16.16-apns.6"
+version = "0.16.16-apns.7"
 edition = "2024"
 
 [dependencies]
