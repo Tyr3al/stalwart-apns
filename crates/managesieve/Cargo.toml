@@ -1,6 +1,6 @@
 [package]
 name = "managesieve"
-version = "0.16.16-apns.8"
+version = "0.16.16-apns.1-rc.1"
 edition = "2024"
 
 [dependencies]

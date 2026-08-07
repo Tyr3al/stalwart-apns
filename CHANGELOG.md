@@ -2,56 +2,32 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.16.16-apns.8] - 2026-08-07
+## [0.16.16-apns.1] - 2026-08-07
 
-### Fixed
-- Test push always failed with `BadDeviceToken` because the handler loaded the registration through the same function that masks the token for the public registrations list, sending APNs the literal masked placeholder instead of the real token.
-
-## [0.16.16-apns.7] - 2026-08-07
-
-### Changed
-- Test push now sends the same silent background payload as a real delivery instead of a visible alert, since the shared XAPS topic isn't authorized for alert-type pushes.
-- A successful push (real or test) is now logged at Info level instead of Trace.
-
-## [0.16.16-apns.6] - 2026-08-07
-
-### Fixed
-- APNs error events logged only the HTTP status code (always 400), discarding the JSON `reason` body (`BadDeviceToken`, `BadTopic`, etc.) that's the actual diagnostic.
-
-## [0.16.16-apns.5] - 2026-08-07
-
-### Fixed
-- Saving any Apple Push (XAPS) settings field always failed with "Invalid property" because the fork's hand-edited property table registered every field under an `xaps`-prefixed JSON key nothing ever sent.
-
-## [0.16.16-apns.4] - 2026-08-07
-
-### Fixed
-- The sysXaps permission sync from 0.16.16-apns.2 silently failed on every boot because it discarded the target role's real revision, always failing its concurrency check; bootstrap errors are now also logged instead of swallowed.
-
-## [0.16.16-apns.3] - 2026-08-07
-
-### Fixed
-- XAPS self-service device requests returned 404 because JMAP account ids were not accepted by the management endpoint.
-- Generic Docker images and CI release binaries omitted the `xaps` feature, causing all `/api/xaps/*` endpoints to return 404.
-- Server failed to start (`Permission::from_id` unwrap panic) because the default-permissions bootstrap swept a sparse id range as if it were dense.
-- XAPS permissions were missing from the role editor's permission catalogue.
-- "My Devices" appeared in a separate top-level section instead of the existing Account menu.
-
-## [0.16.16-apns.2] - 2026-08-06
-
-### Fixed
-- Pre-existing deployments never received the new `sysXaps*` permissions on their default roles; they're now synced in on every boot.
-
-## [0.16.16-apns.1] - 2026-08-06
+Fork versions follow `<upstream-version>-apns.<N>`, resetting `N` to 1 each time the fork
+rebases onto a newer upstream release. Release candidates leading up to a version are tagged
+`-rc.<M>` and marked as a GitHub prerelease.
 
 ### Added
 - "Push Notifications Sent" counter card on the Overview dashboard.
 
 ### Changed
 - Default WebUI `resource_url` now points at [Tyr3al/webui-apns](https://github.com/Tyr3al/webui-apns) instead of upstream `stalwartlabs/webui`.
+- Test push now sends the same silent background payload as a real delivery instead of a visible alert, since the shared XAPS topic isn't authorized for alert-type pushes.
+- A successful push (real or test) is now logged at Info level instead of Trace.
 
 ### Fixed
 - `/api/schema` could panic the HTTP worker on a cold load due to a trailing newline in the embedded hash resource.
+- Pre-existing deployments never received the new `sysXaps*` permissions on their default roles; they're now synced in on every boot.
+- XAPS self-service device requests returned 404 because JMAP account ids were not accepted by the management endpoint.
+- Generic Docker images and CI release binaries omitted the `xaps` feature, causing all `/api/xaps/*` endpoints to return 404.
+- Server failed to start (`Permission::from_id` unwrap panic) because the default-permissions bootstrap swept a sparse id range as if it were dense.
+- XAPS permissions were missing from the role editor's permission catalogue.
+- "My Devices" appeared in a separate top-level section instead of the existing Account menu.
+- The sysXaps permission sync silently failed on every boot because it discarded the target role's real revision, always failing its concurrency check; bootstrap errors are now also logged instead of swallowed.
+- Saving any Apple Push (XAPS) settings field always failed with "Invalid property" because the fork's hand-edited property table registered every field under an `xaps`-prefixed JSON key nothing ever sent.
+- APNs error events logged only the HTTP status code (always 400), discarding the JSON `reason` body (`BadDeviceToken`, `BadTopic`, etc.) that's the actual diagnostic.
+- Test push always failed with `BadDeviceToken` because the handler loaded the registration through the same function that masks the token for the public registrations list, sending APNs the literal masked placeholder instead of the real token.
 
 ## [0.16.16] - 2026-08-02
 
