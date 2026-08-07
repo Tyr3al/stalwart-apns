@@ -177,15 +177,24 @@ Once the server is installed and running (see [Get Started](#get-started) above)
    anything — an external requirement from Apple, obtained outside of Stalwart. Getting one isn't covered
    here yet; see [Prerequisites](docs/xaps-integration.md#prerequisites) for the general shape of what's
    required.
-2. Log in to the admin panel and go to **Settings → Push → Apple Push (XAPS)**.
-3. Fill in:
+2. **If you're migrating an existing deployment from upstream Stalwart** (not a fresh install of this fork),
+   the admin panel is still serving upstream's `stalwartlabs/webui`, which has no XAPS screens at all — the
+   `Application` record that points the server at a webui bundle is only seeded with this fork's
+   `Tyr3al/webui-apns` default when none exists yet, so an existing deployment keeps its old one. Fix this
+   once: in the admin panel, find the web interface's **Application** entry and change its **Resource URL**
+   to `https://github.com/Tyr3al/webui-apns/releases/latest/download/webui.zip`, then trigger its **Update**
+   action to force the new bundle to download and unpack immediately (otherwise it won't refresh until the
+   next `auto_update_frequency` cycle, 30 days by default). A fresh install of this fork already defaults to
+   the right URL — skip this step.
+3. Log in to the admin panel and go to **Settings → Push → Apple Push (XAPS)**.
+4. Fill in:
    - **APNs Topic** — the topic your push credential was issued for. This is **not** `com.apple.mobilemail`
      in practice; it's a custom topic specific to your credential.
    - **Authentication Key (P8)**, **Key ID**, **Team ID** — from your Apple Developer account (recommended,
      token-based auth). Certificate-based (PEM/P12) auth is also supported; see the
      [configuration table](docs/xaps-integration.md#configuring-apns) for the full field list.
-4. Toggle **Enabled** and save.
-5. Connect iOS/macOS Mail to the server. On the next new-mail delivery to **INBOX**, the device should receive
+5. Toggle **Enabled** and save.
+6. Connect iOS/macOS Mail to the server. On the next new-mail delivery to **INBOX**, the device should receive
    a silent push. Use **Settings → Push → Devices** (admin) or **Account → My Devices** (self-service) to
    confirm the device registered, and the **Send test push** button to verify delivery without waiting for mail.
 
