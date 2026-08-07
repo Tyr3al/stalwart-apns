@@ -114,10 +114,12 @@ these numbers, moving them again becomes a breaking change for that data.
 | `Property::Xaps*` (12 fields) | `crates/registry/src/schema/properties.rs`, `properties_impl.rs` | **60100–60111** | `Property::COUNT` intentionally left untouched, same reasoning as `ObjectType::COUNT`. |
 | `trc::EventType::Xaps(XapsEvent::*)` (4 events) | `crates/trc/src/event/enums.rs`, `enums_impl.rs` | **60200–60203** | `TOTAL_EVENT_COUNT` bumped to `60204`. Sizes a single global static array/bitset (`crates/trc/src/ipc/collector.rs`), so the memory cost of a large id (~70 KB, once, globally) is negligible — unlike `Permission::COUNT` this is not per-instance. |
 | `trc::MetricType::XapsSuccess` | `crates/trc/src/event/enums.rs`, `enums_impl.rs` | **60300** | Separate ID space from `EventType` (`MetricType` has no `COUNT` constant sizing an array — it's matched by value, not indexed — so no size bump needed). Backs the "Push Notifications Sent" dashboard card; `event_id()` points it at `EventType::Xaps(XapsEvent::Success)` (60200) so it counts the same underlying event. |
+| `PrincipalField::XapsRegistrations` | `crates/types/src/field.rs` | **200** | `PrincipalField` is `#[repr(u8)]` (max 255), so there is no 60000-style headroom like the blocks above; the fork instead reserves the high block **200–254**, clear of upstream's own packed range (upstream's `ARCHIVE_FIELD` is `50`, and upstream's sequential principal fields sit at 44–49). The previous id was `46`: it fell inside that packed 44–49 range and was upstream's recycled `EncryptionKeys` principal field id (removed upstream commit `d15efc6f`, Mar 2026) — a silent `rkyv` type-confusion risk (see `crates/store/src/write/serialize.rs`'s `rkyv::access_unchecked`) both on upstream merges and on databases upgraded from pre-2026 Stalwart that may still hold `EncryptionKeys` blobs at that key. Fork deployments that registered devices while the id was 46 lose those registrations on upgrade; devices simply re-register automatically on their next IMAP connect, which is acceptable pre-stable-release. |
 
 `Permission`, `Property`, `ObjectType`, and `trc::EventType` are all `#[repr(u16)]` (max value 65535), so
 none of these blocks are close to overflowing, and there's room for another such block if a future
-addition needs one — pick an unused thousand-block and add a row above.
+addition needs one — pick an unused thousand-block and add a row above. `PrincipalField` is the
+exception: it's `#[repr(u8)]`, so its reserved block is sized in the tens, not thousands (see row above).
 
 ### Why the ranges differ in size
 

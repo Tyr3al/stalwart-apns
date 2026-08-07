@@ -82,7 +82,10 @@ pub enum PrincipalField {
     DefaultAddressBookId = 48,
     ActiveScriptId = 49,
     PushSubscriptions = 44,
-    XapsRegistrations = 46,
+    // Fork-reserved id in the high u8 block, see docs/xaps-integration.md
+    // "Fork numbering" -- do not move into upstream's low sequential range
+    // (46 was upstream's recycled EncryptionKeys id).
+    XapsRegistrations = 200,
 }
 
 impl From<ContactField> for u8 {
@@ -161,7 +164,7 @@ impl From<PrincipalField> for u8 {
             PrincipalField::DefaultAddressBookId => 48,
             PrincipalField::ActiveScriptId => 49,
             PrincipalField::PushSubscriptions => 44,
-            PrincipalField::XapsRegistrations => 46,
+            PrincipalField::XapsRegistrations => 200,
             PrincipalField::Archive => ARCHIVE_FIELD,
         }
     }
