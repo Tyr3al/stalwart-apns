@@ -23,6 +23,8 @@ use p256::{
     pkcs8::DecodePrivateKey,
 };
 use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -66,6 +68,34 @@ struct TokenAuth {
     signing_key: SigningKey,
     /// Cached provider token (ES256 JWT) and its issue time.
     token: Arc<Mutex<Option<(String, u64)>>>,
+}
+
+/// Process-wide cache of the last built `ApnsClient`, keyed by a fingerprint
+/// of the config fields that affect it. Rebuilding a client is expensive: it
+/// opens a fresh `reqwest::Client` (new connection pool, new TLS handshake to
+/// Apple) and starts with an empty JWT cache, so a naive "build one per push"
+/// approach would sign a new ES256 provider token on every notification --
+/// Apple throttles providers that do this (`TooManyProviderTokenUpdates`).
+/// Caching by fingerprint means an admin editing the XAPS config (and the
+/// server reloading it) naturally invalidates the cache on next use.
+static APNS_CLIENT_CACHE: Mutex<Option<(u64, Arc<ApnsClient>)>> = Mutex::new(None);
+
+/// Fingerprints the config fields that affect the built `ApnsClient`
+/// (credentials, topic, sandbox flag). `delay`/`check_interval` are
+/// intentionally excluded: changing them doesn't require a new client.
+fn config_fingerprint(config: &XapsConfig) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    config.enabled.hash(&mut hasher);
+    config.topic.hash(&mut hasher);
+    config.key_file_p8.hash(&mut hasher);
+    config.key_id.hash(&mut hasher);
+    config.team_id.hash(&mut hasher);
+    config.certificate_file_pem.hash(&mut hasher);
+    config.certificate_file_pem_key.hash(&mut hasher);
+    config.certificate_file_p12.hash(&mut hasher);
+    config.certificate_file_p12_password.hash(&mut hasher);
+    config.sandbox.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// PEM-encodes DER data with the given block tag (e.g. "CERTIFICATE").
@@ -194,6 +224,34 @@ impl ApnsClient {
             token_auth,
             http_client: client_builder.build().ok()?,
         })
+    }
+
+    /// Returns the cached `ApnsClient` for this config, building (and
+    /// caching) a new one when the cache is empty or the config's relevant
+    /// fields (see `config_fingerprint`) have changed since the last build.
+    /// A misconfigured client (`try_new` returning `None`) is never cached
+    /// as a failure -- the slot is cleared so a corrected config is picked
+    /// up on the next call instead of being stuck returning `None` forever.
+    pub fn get_cached(config: &XapsConfig) -> Option<Arc<ApnsClient>> {
+        let fingerprint = config_fingerprint(config);
+        let mut cache = APNS_CLIENT_CACHE.lock().unwrap();
+        if let Some((cached_fingerprint, client)) = cache.as_ref()
+            && *cached_fingerprint == fingerprint
+        {
+            return Some(client.clone());
+        }
+
+        match Self::try_new(config) {
+            Some(client) => {
+                let client = Arc::new(client);
+                *cache = Some((fingerprint, client.clone()));
+                Some(client)
+            }
+            None => {
+                *cache = None;
+                None
+            }
+        }
     }
 
     fn token(&self, now: u64) -> Option<String> {
@@ -329,7 +387,7 @@ pub async fn deliver_xaps_notifications(
     if !server.core.xaps.enabled {
         return;
     }
-    let Some(apns) = ApnsClient::try_new(&server.core.xaps) else {
+    let Some(apns) = ApnsClient::get_cached(&server.core.xaps) else {
         return;
     };
 
@@ -438,15 +496,35 @@ pub async fn load_xaps_registrations(
 }
 
 async fn delete_xaps_registration(server: &Server, account_id: u32, aps_account_id: &str) {
-    let Ok(Some(mut registrations)) = load_xaps_registrations(server, account_id).await else {
+    // Fetch the raw archive (rather than going through
+    // `load_xaps_registrations`, which only returns the deserialized value)
+    // so it can be used as an `assert_value` precondition below: this guards
+    // against clobbering a registration upsert that lands concurrently with
+    // this fire-and-forget cleanup (triggered by APNs returning 410 for a
+    // different device).
+    let Ok(Some(registrations_archive)) = server
+        .store()
+        .get_value::<Archive<AlignedBytes>>(ValueKey::property(
+            account_id,
+            Collection::Principal,
+            0,
+            PrincipalField::XapsRegistrations,
+        ))
+        .await
+    else {
         return;
     };
+    let Ok(mut registrations) = registrations_archive.deserialize::<XapsRegistrations>() else {
+        return;
+    };
+    registrations.prune(now());
     registrations
         .registrations
         .retain(|r| r.aps_account_id != aps_account_id);
+
+    let mut batch = BatchBuilder::new();
     if registrations.registrations.is_empty() {
         // Remove the field entirely.
-        let mut batch = BatchBuilder::new();
         batch
             .with_account_id(u32::MAX)
             .with_collection(Collection::Principal)
@@ -456,16 +534,14 @@ async fn delete_xaps_registration(server: &Server, account_id: u32, aps_account_
             .with_account_id(account_id)
             .with_collection(Collection::Principal)
             .with_document(0)
+            .assert_value(PrincipalField::XapsRegistrations, &registrations_archive)
             .clear(PrincipalField::XapsRegistrations);
-        if server.commit_batch(batch).await.is_err() {
-            return;
-        }
     } else {
-        let mut batch = BatchBuilder::new();
         batch
             .with_account_id(account_id)
             .with_collection(Collection::Principal)
             .with_document(0)
+            .assert_value(PrincipalField::XapsRegistrations, &registrations_archive)
             .set(
                 PrincipalField::XapsRegistrations,
                 match Archiver::new(registrations).serialize() {
@@ -473,9 +549,12 @@ async fn delete_xaps_registration(server: &Server, account_id: u32, aps_account_
                     Err(_) => return,
                 },
             );
-        if server.commit_batch(batch).await.is_err() {
-            return;
-        }
+    }
+    // A failed assertion (e.g. a concurrent registration upsert) is not
+    // retried here -- the next 410 response from APNs will retry the
+    // cleanup.
+    if server.commit_batch(batch).await.is_err() {
+        return;
     }
 
     // Notify the push manager so the account is unregistered once its last
@@ -559,7 +638,7 @@ pub fn spawn_xaps_delayed(inner: Arc<Inner>, mut rx: mpsc::Receiver<XapsDelayedE
                     if !delayed.is_empty() {
                         let due = collect_due(&delayed, now());
                         if !due.is_empty() {
-                            let apns = ApnsClient::try_new(&server.core.xaps);
+                            let apns = ApnsClient::get_cached(&server.core.xaps);
                             for key in due {
                                 let Some(entry) = delayed.remove(&key) else {
                                     continue;
@@ -845,6 +924,31 @@ mod tests {
         assert!(client.token_auth.is_none(), "cert auth must not use token auth");
         assert_eq!(client.host, APNS_PRODUCTION_HOST);
         assert_eq!(client.topic, "com.apple.mail");
+    }
+
+    #[test]
+    fn cached_client_reused_until_config_changes() {
+        let config = test_config();
+        let client1 = ApnsClient::get_cached(&config).unwrap();
+        let client2 = ApnsClient::get_cached(&config).unwrap();
+        assert!(
+            Arc::ptr_eq(&client1, &client2),
+            "an unchanged config must reuse the cached client"
+        );
+
+        let mut changed = config.clone();
+        changed.sandbox = !changed.sandbox;
+        let client3 = ApnsClient::get_cached(&changed).unwrap();
+        assert!(
+            !Arc::ptr_eq(&client1, &client3),
+            "a changed config must rebuild the client"
+        );
+
+        // Switching back to the (now stale) original config rebuilds again
+        // rather than resurrecting the first Arc from a single-slot cache.
+        let client4 = ApnsClient::get_cached(&config).unwrap();
+        assert!(!Arc::ptr_eq(&client1, &client4));
+        assert!(!Arc::ptr_eq(&client3, &client4));
     }
 
     #[test]

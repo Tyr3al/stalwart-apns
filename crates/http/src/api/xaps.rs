@@ -126,7 +126,7 @@ pub async fn handle_xaps_api_request(
         };
 
         // Report a broken configuration so the UI can surface it.
-        let Some(apns) = ApnsClient::try_new(&server.core.xaps) else {
+        let Some(apns) = ApnsClient::get_cached(&server.core.xaps) else {
             return Ok(JsonResponse::new(TestResult {
                 status: "not-configured",
             })
@@ -362,10 +362,12 @@ async fn delete_xaps_registrations(
             .with_collection(Collection::Principal)
             .with_document(account_id)
             .untag(PrincipalField::XapsRegistrations);
+        // Guard against a concurrent registration upsert.
         batch
             .with_account_id(account_id)
             .with_collection(Collection::Principal)
             .with_document(0)
+            .assert_value(PrincipalField::XapsRegistrations, registrations_archive)
             .clear(PrincipalField::XapsRegistrations);
     } else {
         // Guard against a concurrent registration upsert.
