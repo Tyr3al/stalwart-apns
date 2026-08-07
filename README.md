@@ -18,14 +18,17 @@
 > cargo build --release --features xaps
 > ```
 >
-> See [docs/xaps-integration.md](docs/xaps-integration.md) for the full integration plan and details,
+> See [docs/xaps-integration.md](docs/xaps-integration.md) for the full details,
 > including the reserved numeric ID ranges this fork uses in the auto-generated registry/`trc` schema files
 > (important to know before merging upstream changes).
->
+
+> [!CAUTION]
 > **This fork is under active development and has not had a stable release.** Versions tagged
 > `-rc.*` are release candidates, not finished releases. Run it against production mail data only
 > if you understand the risks and have working backups — data loss is possible.
 >
+
+> [!IMPORTANT]
 > **A working Apple Push Notification service (APNs) credential is required for push to work at all** —
 > this is an external requirement from Apple, obtained outside of Stalwart. Without it, devices can still
 > register but no pushes will ever be delivered. See [XAPS Quickstart](#xaps-quickstart) below.
