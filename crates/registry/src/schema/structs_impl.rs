@@ -47273,13 +47273,16 @@ impl Default for Xaps {
 impl IntoValue for Xaps {
     fn into_value(self) -> JmapValue<'static> {
         let mut map = jmap_tools::Map::with_capacity(10);
-        map.insert_unchecked(Property::XapsEnabled, self.enabled.into_value());
+        // NOTE(xaps-fork): Enabled/TeamId/Sandbox/Delay use the pre-existing shared Property
+        // variants here, not the dedicated Xaps ones -- see the NOTE(xaps-fork) comment in
+        // properties_impl.rs::parse().
+        map.insert_unchecked(Property::Enabled, self.enabled.into_value());
         map.insert_unchecked(Property::XapsTopic, self.topic.into_value());
         map.insert_unchecked(Property::XapsKeyFileP8, self.key_file_p8.into_value());
         map.insert_unchecked(Property::XapsKeyId, self.key_id.into_value());
-        map.insert_unchecked(Property::XapsTeamId, self.team_id.into_value());
-        map.insert_unchecked(Property::XapsSandbox, self.sandbox.into_value());
-        map.insert_unchecked(Property::XapsDelay, self.delay.into_value());
+        map.insert_unchecked(Property::TeamId, self.team_id.into_value());
+        map.insert_unchecked(Property::Sandbox, self.sandbox.into_value());
+        map.insert_unchecked(Property::Delay, self.delay.into_value());
         map.insert_unchecked(Property::XapsCheckInterval, self.check_interval.into_value());
         map.insert_unchecked(
             Property::XapsCertificateFilePem,
@@ -47308,13 +47311,16 @@ impl RegistryJsonPropertyPatch for Xaps {
         value: JmapValue<'x>,
     ) -> PatchResult<'x> {
         match pointer.next_property() {
-            Some(Property::XapsEnabled) => self.enabled.patch(pointer, value),
+            // NOTE(xaps-fork): these four match the pre-existing shared Property variants, not
+            // the dedicated Xaps ones -- see the NOTE(xaps-fork) comment in
+            // properties_impl.rs::parse().
+            Some(Property::Enabled) => self.enabled.patch(pointer, value),
+            Some(Property::TeamId) => self.team_id.patch(pointer, value),
+            Some(Property::Sandbox) => self.sandbox.patch(pointer, value),
+            Some(Property::Delay) => self.delay.patch(pointer, value),
             Some(Property::XapsTopic) => self.topic.patch(pointer, value),
             Some(Property::XapsKeyFileP8) => self.key_file_p8.patch(pointer, value),
             Some(Property::XapsKeyId) => self.key_id.patch(pointer, value),
-            Some(Property::XapsTeamId) => self.team_id.patch(pointer, value),
-            Some(Property::XapsSandbox) => self.sandbox.patch(pointer, value),
-            Some(Property::XapsDelay) => self.delay.patch(pointer, value),
             Some(Property::XapsCheckInterval) => self.check_interval.patch(pointer, value),
             Some(Property::XapsCertificateFilePem) => self.certificate_file_pem.patch(pointer, value),
             Some(Property::XapsCertificateFilePemKey) => {

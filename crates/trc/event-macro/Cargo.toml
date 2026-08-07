@@ -1,6 +1,6 @@
 [package]
 name = "event_macro"
-version = "0.16.16-apns.3"
+version = "0.16.16-apns.5"
 edition = "2024"
 
 [lib]

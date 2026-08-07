@@ -2,9 +2,21 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.16-apns.5] - 2026-08-07
+
+### Fixed
+- Saving any Apple Push (XAPS) settings field always failed with "Invalid property" because the fork's hand-edited property table registered every field under an `xaps`-prefixed JSON key nothing ever sent.
+
+## [0.16.16-apns.4] - 2026-08-07
+
+### Fixed
+- The sysXaps permission sync from 0.16.16-apns.2 silently failed on every boot because it discarded the target role's real revision, always failing its concurrency check; bootstrap errors are now also logged instead of swallowed.
+
 ## [0.16.16-apns.3] - 2026-08-07
 
 ### Fixed
+- XAPS self-service device requests returned 404 because JMAP account ids were not accepted by the management endpoint.
+- Generic Docker images and CI release binaries omitted the `xaps` feature, causing all `/api/xaps/*` endpoints to return 404.
 - Server failed to start (`Permission::from_id` unwrap panic) because the default-permissions bootstrap swept a sparse id range as if it were dense.
 - XAPS permissions were missing from the role editor's permission catalogue.
 - "My Devices" appeared in a separate top-level section instead of the existing Account menu.
@@ -1757,4 +1769,3 @@ This version introduces some breaking changes in the configuration file. Please 
 - Replaced `actix` with `hyper`.
  
 ### Fixed
-

@@ -130,6 +130,16 @@ impl BootManager {
         // Add safe defaults if missing
         if import_export == StoreOp::None {
             bootstrap.insert_safe_defaults().await;
+            // NOTE(xaps-fork): errors pushed here were previously never surfaced anywhere --
+            // insert_safe_defaults() swallowed them into bootstrap.errors and nothing read that
+            // list on this path, so any failure here (including in this fork's own
+            // permission-sync step) was completely silent, with no journalctl entry at all.
+            for error in &bootstrap.errors {
+                error.log();
+            }
+            for warning in &bootstrap.warnings {
+                warning.log();
+            }
         }
 
         // Start listeners

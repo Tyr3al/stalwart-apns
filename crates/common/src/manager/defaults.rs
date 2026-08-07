@@ -12,7 +12,7 @@ use aws_lc_rs::{
 use registry::{
     schema::{
         enums::*,
-        prelude::{ObjectType, SocketAddr},
+        prelude::{Object, ObjectType, SocketAddr},
         structs::*,
     },
     types::{duration::Duration, error::Error, list::List, map::Map},
@@ -490,25 +490,40 @@ async fn insert_safe_defaults(bp: &mut Bootstrap) -> trc::Result<()> {
                 continue;
             }
 
-            let old_object = role.object.clone();
+            // Object::from()'s blanket impl always sets revision: 0, discarding the real
+            // stored revision (role.revision, carried on the RegistryObject wrapper, not on
+            // the inner Role). RegistryWrite::update() does optimistic concurrency control via
+            // AssertValue::Hash(old_object.revision), so passing revision 0 here made this
+            // write silently fail its CAS check on every boot, no matter how many permissions
+            // were actually missing.
+            let old_object = Object::with_revision(role.object.clone().into(), role.revision);
             let mut updated = role.object.clone();
+            let missing_count = missing.len();
             for permission in missing {
                 updated.enabled_permissions.push(permission);
             }
 
-            if !matches!(
-                bp.registry
-                    .write(RegistryWrite::update(
-                        role.id.id(),
-                        &updated.into(),
-                        &old_object.into(),
-                    ))
-                    .await?,
-                RegistryWriteResult::Success(_)
-            ) {
+            let result = bp
+                .registry
+                .write(RegistryWrite::update(role.id.id(), &updated.into(), &old_object))
+                .await?;
+
+            if matches!(result, RegistryWriteResult::Success(_)) {
+                trc::event!(
+                    Server(trc::ServerEvent::Startup),
+                    Details = format!(
+                        "Synced {missing_count} newly added permission(s) onto default role \"{}\"",
+                        role.object.description
+                    ),
+                );
+            } else {
                 bp.build_error(
                     role.id,
-                    "Failed to sync newly added permissions onto an existing default role",
+                    format!(
+                        "Failed to sync {missing_count} newly added permission(s) onto default \
+                         role \"{}\": {result}",
+                        role.object.description
+                    ),
                 );
             }
         }
