@@ -16,7 +16,10 @@
 //! `<account>` is either a numeric account id, a JMAP account id, or an email
 //! address. Requests for the authenticated user's own account are allowed
 //! without admin permissions (self-service); other accounts and the list-all
-//! endpoint require `SysAccountGet` (list) / `SysAccountUpdate` (delete).
+//! endpoint require `SysXapsGet` OR `SysAccountGet` (list) / `SysXapsUpdate`
+//! OR `SysAccountUpdate` (delete, test push) -- either permission is
+//! sufficient, so an XAPS-only admin role and a generic account-management
+//! role both work.
 
 use common::{
     KV_RATE_LIMIT_XAPS, Server,
@@ -87,8 +90,14 @@ pub async fn handle_xaps_api_request(
         let device_id = percent_decode_str(device_id)
             .decode_utf8_lossy()
             .into_owned();
-        let account_id = resolve_account_id(server, &account).await?;
-        assert_self_or_admin(access_token, account_id, Permission::SysAccountUpdate)?;
+        let account_id = resolve_and_authorize(
+            server,
+            access_token,
+            &account,
+            Permission::SysXapsUpdate,
+            Permission::SysAccountUpdate,
+        )
+        .await?;
 
         // Limit test pushes to 10 per minute per account.
         if server
@@ -159,7 +168,9 @@ pub async fn handle_xaps_api_request(
         match path.get(2).copied() {
             // List all accounts with registered devices (admin only).
             None => {
-                access_token.enforce_permission(Permission::SysAccountGet)?;
+                if !has_either_permission(access_token, Permission::SysXapsGet, Permission::SysAccountGet) {
+                    access_token.enforce_permission(Permission::SysAccountGet)?;
+                }
                 let mut accounts = Vec::new();
                 for account_id in server
                     .document_ids(
@@ -184,8 +195,14 @@ pub async fn handle_xaps_api_request(
                 let account = percent_decode_str(account)
                     .decode_utf8_lossy()
                     .into_owned();
-                let account_id = resolve_account_id(server, &account).await?;
-                assert_self_or_admin(access_token, account_id, Permission::SysAccountGet)?;
+                let account_id = resolve_and_authorize(
+                    server,
+                    access_token,
+                    &account,
+                    Permission::SysXapsGet,
+                    Permission::SysAccountGet,
+                )
+                .await?;
                 Ok(JsonResponse::new(
                     load_xaps_account(server, account_id)
                         .await
@@ -202,10 +219,14 @@ pub async fn handle_xaps_api_request(
         let account = percent_decode_str(account)
             .decode_utf8_lossy()
             .into_owned();
-        let account_id = resolve_account_id(server, &account).await?;
-        // The account owner may remove their own devices without admin
-        // permissions.
-        assert_self_or_admin(access_token, account_id, Permission::SysAccountUpdate)?;
+        let account_id = resolve_and_authorize(
+            server,
+            access_token,
+            &account,
+            Permission::SysXapsUpdate,
+            Permission::SysAccountUpdate,
+        )
+        .await?;
         let device_id = path
             .get(3)
             .copied()
@@ -223,17 +244,67 @@ pub async fn handle_xaps_api_request(
     }
 }
 
+/// Returns whether the caller holds either of the two alternative admin
+/// permissions that authorize the XAPS device-management API: the
+/// XAPS-specific permission or the generic account-management permission.
+/// Either is sufficient, so an XAPS-only admin role and a generic
+/// account-management role both work.
+fn has_either_permission(
+    access_token: &AccessToken,
+    xaps_permission: Permission,
+    account_permission: Permission,
+) -> bool {
+    access_token.has_permission(xaps_permission) || access_token.has_permission(account_permission)
+}
+
 /// Allows the request when the target account is the authenticated user's own
-/// account, otherwise requires the given admin permission.
+/// account, otherwise requires either the XAPS-specific or the generic
+/// account admin permission.
 fn assert_self_or_admin(
     access_token: &AccessToken,
     account_id: u32,
-    admin_permission: Permission,
+    xaps_permission: Permission,
+    account_permission: Permission,
 ) -> trc::Result<()> {
-    if access_token.account_id() == account_id {
+    if access_token.account_id() == account_id
+        || has_either_permission(access_token, xaps_permission, account_permission)
+    {
         Ok(())
     } else {
-        access_token.enforce_permission(admin_permission)
+        // Neither permission is held; report the generic account permission's
+        // error so the error shape/telemetry stays consistent regardless of
+        // which alternative permission a deployment relies on.
+        access_token.enforce_permission(account_permission)
+    }
+}
+
+/// Resolves the target account and authorizes the request, without leaking
+/// whether an account exists to callers who lack an admin permission: for
+/// them, an unresolvable account returns the same permission error as an
+/// existing account they may not access.
+async fn resolve_and_authorize(
+    server: &Server,
+    access_token: &AccessToken,
+    account: &str,
+    xaps_permission: Permission,
+    account_permission: Permission,
+) -> trc::Result<u32> {
+    match resolve_account_id(server, account).await {
+        Ok(account_id) => {
+            assert_self_or_admin(access_token, account_id, xaps_permission, account_permission)?;
+            Ok(account_id)
+        }
+        Err(err) => {
+            // Admins (holding either permission) get the honest NotFound;
+            // everyone else gets the same permission error an
+            // existing-but-foreign account produces.
+            if has_either_permission(access_token, xaps_permission, account_permission) {
+                Err(err)
+            } else {
+                access_token.enforce_permission(account_permission)?;
+                Err(err)
+            }
+        }
     }
 }
 
@@ -465,6 +536,59 @@ mod tests {
         assert_eq!(
             parse_account_id(&Id::from_parts(1, 42).as_string()),
             None
+        );
+    }
+
+    #[test]
+    fn either_permission_authorizes_admin_access() {
+        // Either the XAPS-specific or the generic account permission alone
+        // must be sufficient; holding neither must be rejected, and a
+        // foreign account with no relevant permission must fail the same way
+        // regardless of which pair of permissions is being checked.
+        let xaps_only = AccessToken::from_permissions(1, [Permission::SysXapsGet]);
+        let account_only = AccessToken::from_permissions(1, [Permission::SysAccountGet]);
+        let neither = AccessToken::from_permissions(1, []);
+
+        assert!(has_either_permission(
+            &xaps_only,
+            Permission::SysXapsGet,
+            Permission::SysAccountGet
+        ));
+        assert!(has_either_permission(
+            &account_only,
+            Permission::SysXapsGet,
+            Permission::SysAccountGet
+        ));
+        assert!(!has_either_permission(
+            &neither,
+            Permission::SysXapsGet,
+            Permission::SysAccountGet
+        ));
+
+        // Foreign account (id 2, tokens are for account 1): admin permission
+        // required, either one accepted.
+        assert!(
+            assert_self_or_admin(&xaps_only, 2, Permission::SysXapsGet, Permission::SysAccountGet)
+                .is_ok()
+        );
+        assert!(
+            assert_self_or_admin(
+                &account_only,
+                2,
+                Permission::SysXapsGet,
+                Permission::SysAccountGet
+            )
+            .is_ok()
+        );
+        assert!(
+            assert_self_or_admin(&neither, 2, Permission::SysXapsGet, Permission::SysAccountGet)
+                .is_err()
+        );
+
+        // Self-service: no permission needed when acting on one's own account.
+        assert!(
+            assert_self_or_admin(&neither, 1, Permission::SysXapsGet, Permission::SysAccountGet)
+                .is_ok()
         );
     }
 

@@ -86,6 +86,27 @@ XAPS piggybacks on the same per-node `push_notifications` cluster role WebPush u
 — you only need to look at this if you've deliberately disabled it on a node (cluster role settings), in which
 case that node won't send XAPS pushes either.
 
+## Permission model
+
+The fork defines three XAPS-specific permissions (`SysXapsGet`, `SysXapsQuery`, `SysXapsUpdate`, IDs 9000–9002)
+that guard the **XAPS settings singleton** in the admin panel — the configuration page for APNs credentials and
+behavior. `SysXapsGet`/`SysXapsUpdate` also authorize the device-management API
+(`/api/xaps/registrations` and `/api/xaps/test`), as an *alternative* to the **generic account-management
+permissions**: listing another account's registrations accepts either `SysXapsGet` or `SysAccountGet`, and
+deleting registrations or sending a test push accepts either `SysXapsUpdate` or `SysAccountUpdate`. Either
+permission is sufficient on its own — device registrations are per-account data, equivalent to other account
+state, so the generic permissions naturally apply too. `SysXapsQuery` is not part of this: it stays
+settings-only. As before, there is a self-service exception: users always manage their own devices without
+requiring any admin permission, and only when accessing another account's devices does one of the admin
+permissions above become necessary.
+
+The two permission families default onto different roles (`crates/common/src/auth/permissions.rs`,
+`DefaultPermissions`): `sysXaps*` lands on the superuser role only, while `sysAccount*` lands on both the
+tenant and superuser roles. In practice this means tenant admins can manage XAPS devices out of the box (via
+`sysAccount*`, unchanged from before), while a deployment that wants a narrower, XAPS-only admin role — able to
+manage device registrations and push testing but nothing else account-related — can build one from `sysXaps*`
+alone.
+
 ## Fork numbering: reserved numeric ID ranges
 
 Several registry/`trc` files under `crates/registry/src/schema/` and `crates/trc/src/event/` are marked
