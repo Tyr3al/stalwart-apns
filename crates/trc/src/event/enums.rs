@@ -6,9 +6,9 @@
 
 // This file is auto-generated. Do not edit directly.
 
-// NOTE(xaps-fork): must stay > the highest fork-reserved event id (60203),
+// NOTE(xaps-fork): must stay > the highest fork-reserved event id (60204),
 // see docs/xaps-integration.md ("Fork numbering" section). Sizes global per-event level/interest arrays.
-pub const TOTAL_EVENT_COUNT: usize = 60204;
+pub const TOTAL_EVENT_COUNT: usize = 60205;
 pub const TOTAL_METRIC_COUNT: usize = 367;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -589,6 +589,7 @@ pub enum XapsEvent {
     Scheduled = 60201,
     Error = 60202,
     DeviceTokenInactive = 60203,
+    Registered = 60204,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

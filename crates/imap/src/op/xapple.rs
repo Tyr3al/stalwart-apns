@@ -21,7 +21,7 @@ use store::{
     Serialize, ValueKey,
     write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
 };
-use trc::{AddContext, ServerEvent};
+use trc::{AddContext, ServerEvent, XapsEvent};
 use types::{collection::Collection, field::PrincipalField};
 
 // Default APNs topic used when none is configured, mirroring the default
@@ -83,12 +83,11 @@ impl<T: SessionStream> Session<T> {
         registrations.prune(current_time);
 
         // Reject new devices once the per-account limit is reached.
-        if !registrations
+        let is_new_device = !registrations
             .registrations
             .iter()
-            .any(|r| r.aps_account_id == arguments.aps_account_id)
-            && registrations.registrations.len() >= XAPS_MAX_REGISTRATIONS
-        {
+            .any(|r| r.aps_account_id == arguments.aps_account_id);
+        if is_new_device && registrations.registrations.len() >= XAPS_MAX_REGISTRATIONS {
             return Err(trc::ImapEvent::Error
                 .into_err()
                 .details("Too many devices registered.")
@@ -97,7 +96,8 @@ impl<T: SessionStream> Session<T> {
         }
 
         // Upsert this device's registration.
-        registrations.upsert(XapsRegistration {
+        let device_id = arguments.aps_account_id.clone();
+        let changed = registrations.upsert(XapsRegistration {
             aps_account_id: arguments.aps_account_id,
             device_token: arguments.aps_device_token,
             mailboxes: arguments.mailboxes,
@@ -130,6 +130,17 @@ impl<T: SessionStream> Session<T> {
             .commit_batch(batch)
             .await
             .caused_by(trc::location!())?;
+
+        if changed {
+            trc::event!(
+                Xaps(XapsEvent::Registered),
+                Details = if is_new_device {
+                    format!("XAPS device {device_id} registered for account {account_id}")
+                } else {
+                    format!("XAPS device {device_id} re-registered for account {account_id}")
+                },
+            );
+        }
 
         // Notify the push manager so it forwards new-mail events for this
         // account to the XAPS push path.

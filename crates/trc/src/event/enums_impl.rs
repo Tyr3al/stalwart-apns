@@ -399,6 +399,7 @@ impl EventType {
             b"xaps.scheduled" => EventType::Xaps(XapsEvent::Scheduled),
             b"xaps.error" => EventType::Xaps(XapsEvent::Error),
             b"xaps.device-token-inactive" => EventType::Xaps(XapsEvent::DeviceTokenInactive),
+            b"xaps.registered" => EventType::Xaps(XapsEvent::Registered),
             b"queue.started" => EventType::Queue(QueueEvent::Started),
             b"queue.message-queued" => EventType::Queue(QueueEvent::MessageQueued),
             b"queue.authenticated-message-queued" => EventType::Queue(QueueEvent::AuthenticatedMessageQueued),
@@ -1147,6 +1148,7 @@ impl EventType {
             EventType::Xaps(XapsEvent::Scheduled) => "xaps.scheduled",
             EventType::Xaps(XapsEvent::Error) => "xaps.error",
             EventType::Xaps(XapsEvent::DeviceTokenInactive) => "xaps.device-token-inactive",
+            EventType::Xaps(XapsEvent::Registered) => "xaps.registered",
             EventType::Queue(QueueEvent::Started) => "queue.started",
             EventType::Queue(QueueEvent::MessageQueued) => "queue.message-queued",
             EventType::Queue(QueueEvent::AuthenticatedMessageQueued) => {
@@ -1822,6 +1824,7 @@ impl EventType {
             EventType::Xaps(XapsEvent::Scheduled) => 60201,
             EventType::Xaps(XapsEvent::Error) => 60202,
             EventType::Xaps(XapsEvent::DeviceTokenInactive) => 60203,
+            EventType::Xaps(XapsEvent::Registered) => 60204,
             EventType::Queue(QueueEvent::Started) => 390,
             EventType::Queue(QueueEvent::MessageQueued) => 380,
             EventType::Queue(QueueEvent::AuthenticatedMessageQueued) => 381,
@@ -2503,6 +2506,7 @@ impl EventType {
             60201 => Some(EventType::Xaps(XapsEvent::Scheduled)),
             60202 => Some(EventType::Xaps(XapsEvent::Error)),
             60203 => Some(EventType::Xaps(XapsEvent::DeviceTokenInactive)),
+            60204 => Some(EventType::Xaps(XapsEvent::Registered)),
             390 => Some(EventType::Queue(QueueEvent::Started)),
             380 => Some(EventType::Queue(QueueEvent::MessageQueued)),
             381 => Some(EventType::Queue(QueueEvent::AuthenticatedMessageQueued)),
@@ -3048,6 +3052,7 @@ impl EventType {
             EventType::Pop3(Pop3Event::RawOutput) => Level::Trace,
             EventType::PushSubscription(PushSubscriptionEvent::Success) => Level::Trace,
             EventType::Xaps(XapsEvent::Success) => Level::Info,
+            EventType::Xaps(XapsEvent::Registered) => Level::Info,
             EventType::Xaps(XapsEvent::Scheduled) => Level::Trace,
             EventType::Smtp(SmtpEvent::RawInput) => Level::Trace,
             EventType::Smtp(SmtpEvent::RawOutput) => Level::Trace,
@@ -3620,6 +3625,7 @@ impl EventType {
             EventType::Xaps(XapsEvent::DeviceTokenInactive) => {
                 "APNs device token is no longer active"
             }
+            EventType::Xaps(XapsEvent::Registered) => "XAPS device registered",
             EventType::Queue(QueueEvent::Started) => "MTA queue started",
             EventType::Queue(QueueEvent::MessageQueued) => "Queued message for delivery",
             EventType::Queue(QueueEvent::AuthenticatedMessageQueued) => {
@@ -4576,6 +4582,7 @@ impl EventType {
             EventType::Xaps(XapsEvent::Scheduled),
             EventType::Xaps(XapsEvent::Error),
             EventType::Xaps(XapsEvent::DeviceTokenInactive),
+            EventType::Xaps(XapsEvent::Registered),
             EventType::Queue(QueueEvent::Started),
             EventType::Queue(QueueEvent::MessageQueued),
             EventType::Queue(QueueEvent::AuthenticatedMessageQueued),
