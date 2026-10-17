@@ -8,7 +8,6 @@ use super::{Metadata, QueueEnvelope, Status};
 use crate::{core::throttle::NewKey, queue::MessageWrapper};
 use ahash::AHashSet;
 use common::{Server, config::smtp::queue::QueueQuota, expr::functions::ResolveVariable};
-use registry::schema::prelude::Property;
 use std::future::Future;
 use store::{
     ValueKey,
@@ -128,9 +127,9 @@ impl HasQueueQuota for Server {
         refs: &mut Vec<Metadata>,
         session_id: u64,
     ) -> bool {
-        if !quota.expr.is_empty()
-            && self
-                .eval_expr(&quota.expr, envelope, quota.id, Property::Match, session_id)
+        if quota.expr.is_empty()
+            || self
+                .eval_if(&quota.expr, envelope, session_id)
                 .await
                 .unwrap_or(false)
         {

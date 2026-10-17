@@ -1198,6 +1198,7 @@ impl EnumImpl for Property {
             b"sentinelUsername" => Property::SentinelUsername,
             b"separator" => Property::Separator,
             b"serverHostname" => Property::ServerHostname,
+            b"serverId" => Property::ServerId,
             b"servers" => Property::Servers,
             b"serviceAccountJson" => Property::ServiceAccountJson,
             b"serviceName" => Property::ServiceName,
@@ -2151,6 +2152,7 @@ impl EnumImpl for Property {
             Property::SentinelUsername => "sentinelUsername",
             Property::Separator => "separator",
             Property::ServerHostname => "serverHostname",
+            Property::ServerId => "serverId",
             Property::Servers => "servers",
             Property::ServiceAccountJson => "serviceAccountJson",
             Property::ServiceName => "serviceName",
@@ -3107,6 +3109,7 @@ impl EnumImpl for Property {
             914 => Some(Property::SentinelUsername),
             97 => Some(Property::Separator),
             121 => Some(Property::ServerHostname),
+            934 => Some(Property::ServerId),
             308 => Some(Property::Servers),
             316 => Some(Property::ServiceAccountJson),
             913 => Some(Property::ServiceName),
@@ -3269,7 +3272,7 @@ impl EnumImpl for Property {
         }
     }
 
-    const COUNT: usize = 934;
+    const COUNT: usize = 935;
 }
 
 impl serde::Serialize for Property {
@@ -4543,6 +4546,7 @@ impl ObjectInner {
             ObjectInner::DnsServer(DnsServer::Vultr(obj)) => obj.member_tenant_id,
             ObjectInner::DnsServer(DnsServer::WebSupport(obj)) => obj.member_tenant_id,
             ObjectInner::DnsServer(DnsServer::YandexCloud(obj)) => obj.member_tenant_id,
+            ObjectInner::DnsServer(DnsServer::PowerDns(obj)) => obj.member_tenant_id,
             ObjectInner::Domain(obj) => obj.member_tenant_id,
             ObjectInner::MailingList(obj) => obj.member_tenant_id,
             ObjectInner::OAuthClient(obj) => obj.member_tenant_id,
@@ -4645,6 +4649,7 @@ impl ObjectInner {
             ObjectInner::DnsServer(DnsServer::Vultr(obj)) => obj.member_tenant_id = Some(id),
             ObjectInner::DnsServer(DnsServer::WebSupport(obj)) => obj.member_tenant_id = Some(id),
             ObjectInner::DnsServer(DnsServer::YandexCloud(obj)) => obj.member_tenant_id = Some(id),
+            ObjectInner::DnsServer(DnsServer::PowerDns(obj)) => obj.member_tenant_id = Some(id),
             ObjectInner::Domain(obj) => obj.member_tenant_id = Some(id),
             ObjectInner::MailingList(obj) => obj.member_tenant_id = Some(id),
             ObjectInner::OAuthClient(obj) => obj.member_tenant_id = Some(id),
@@ -5329,6 +5334,7 @@ impl ObjectInner {
             ObjectInner::ReportSettings(obj) => Some(obj.expression_ctxs()),
             ObjectInner::SenderAuth(obj) => Some(obj.expression_ctxs()),
             ObjectInner::SieveSystemInterpreter(obj) => Some(obj.expression_ctxs()),
+            ObjectInner::SieveUserInterpreter(obj) => Some(obj.expression_ctxs()),
             ObjectInner::SpamDnsblServer(obj) => Some(obj.expression_ctxs()),
             ObjectInner::SpamRule(obj) => Some(obj.expression_ctxs()),
             ObjectInner::SpfReportSettings(obj) => Some(obj.expression_ctxs()),

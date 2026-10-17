@@ -2,7 +2,26 @@
 
 All notable changes to this project will be documented in this file. This project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.16.21] - 2026-09-XX
+## [0.16.26] - 2026-10-11
+
+If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
+
+## Added
+- `sd_notify` support.
+- JMAP: `Mailbox/set` allows moving a mailbox under a parent that already has a child with the same name, and rejects renames that only change the case of a mailbox name with `alreadyExists`.
+
+## Changed
+
+## Fixed
+- DNSSEC: Use `hickory-resolver` patched fork at https://github.com/stalwartlabs/hickory-dns.
+- RocksDB: Blob garbage collection rewrites every stored blob on each compaction of the blobs column family, about once per 128MB of new mail.
+- Milter: End-of-headers is not sent to milters that negotiate `SMFIP_NOHDRS` without `SMFIP_NOEOH`, so the transaction stalls until it times out.
+- OIDC: When the access token lacks the `claimUsername` claim but has an `email` claim, the account is built from `email` without consulting the userinfo endpoint.
+- JMAP: 
+  - `onSuccessUpdateEmail` and `onSuccessDestroyEmail` entries in `EmailSubmission/set` that name an existing submission by id update or destroy the Email with the same id instead of the submission's own Email.
+  - A `VacationResponse/set` that only sets `isEnabled` on an account without a vacation response activates an empty Sieve script.
+
+## [0.16.25] - 2026-10-05
 
 If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
 
@@ -11,7 +30,150 @@ If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If
 ## Changed
 
 ## Fixed
-- Authentication: Empty passwords are rejected before reaching an external directory, so LDAP servers that answer an unauthenticated bind (a non-empty DN with a zero-length password) with success no longer authenticate accounts without a password.
+- JMAP: Creating a `MaskedEmail` with `emailDomain` fails with `forbidden` for every domain when the account has addresses on more than one domain.
+- Autodiscover: Requests for a response schema other than Outlook's, such as ActiveSync (`mobilesync`), are answered with the Outlook settings instead of error 601.
+- IMAP:
+  - `LOGIN` and `AUTHENTICATE` with a wrong, expired or unknown app password or API key are answered with an untagged `NO`, so clients keep waiting for the command to complete until the connection times out.
+  - The failed login that exceeds the maximum number of authentication failures is answered with an untagged `NO` before the connection is closed.
+- DKIM:
+  - A rotation moves the active key to retiring even when its successor fails to publish or propagate, so outgoing mail is sent unsigned until a retry publishes the new key. The DNS write failure is also not logged and the task reports success.
+  - Keys created while DNS management was manual, or before DKIM was added to the published records, are never rotated after DNS management becomes automatic. Domains already affected start rotating once a `DkimManagement` task is created for them.
+  - After switching DNS management from automatic to manual, a due rotation activates a new key that was never published in DNS, so signatures fail verification, and retiring the old key is retried forever.
+- Spam filter:
+  - Messages with no text line long enough for a Pyzor digest are checked with the digest of empty input and tagged `PYZOR`.
+  - DNSBL answers with several return codes, such as a Spamhaus ZEN listing in both SBL and PBL, are scored for only the first code returned.
+  - DNSBL lookups that return "not listed" are cached for 24 hours regardless of the zone's negative TTL.
+  - Removing a duplicate training sample of a message reclassified on the same day clears the blob link of the sample that is kept.
+- MTA: Queue quotas with an empty `match` expression are never enforced, including the global queue quota created on first start.
+- RocksDB: The info log (`LOG`, `LOG.old.*`) grows without limit because log rotation and retention are left at RocksDB defaults.
+- WebUI: A blob store read error at startup, such as an S3 authentication failure, stops the web interface from being downloaded.
+
+## [0.16.24] - 2026-09-27
+
+If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
+
+## Added
+- DNS: PowerDNS Authoritative provider for automatic DNS record management.
+
+## Changed
+
+## Fixed
+- Troubleshoot tool: `TLSA` records are looked up for every MX host, including hosts whose zone is not DNSSEC signed.
+- Spam filter:
+  - OpenPhish and PhishTank entries containing uppercase characters never match, since message URLs are lowercased while HTTP lookup entries keep their original case. HTTP lookups now match keys case-insensitively.
+  - URL shortener links are followed using the lowercased URL, so case-sensitive short links resolve to the wrong destination or not at all.
+  - Incremental training never advances its position past the first run, so every retained sample added since then is trained again, and counted again in the reservoir, on each run until it expires.
+  - Updating the rules only adds new objects, so upstream changes to existing rules, DNSBL servers, HTTP lookups, lookup keys and file extensions never reach an existing installation.
+  - Updating the rules reports success when objects fail to import, or when a configuration error stops the updated settings from being activated.
+- JMAP:
+  - A `PushSubscription` created within the verification rate limit window of another one on the same account never receives its `PushVerification`, since the blocked verification is dropped instead of being sent once the window expires.
+  - A push notification retried after a failed delivery can report an older state than a change queued during the failed attempt, since the older state changes are merged last and overwrite the newer ones.
+  - Changes made while a push request is in flight are not delivered until the next change reaches the same subscription, since a successful delivery cancels the pending retry.
+  - The VAPID `aud` claim is derived from a hand-written parse of the push URL, so a crafted push URL can make the server sign a token for a push service other than the one the request is sent to.
+  - `Email/import` rejects a `blobId` that refers to a `Blob/upload` creation id in the same request (`"#u0"`) with `Invalid blob id.`.
+  - `Email/set` with a full `mailboxIds` object identical to the current mailboxes, together with a keyword change, stores the message with IMAP UID 0, so IMAP clients stop seeing it.
+- MTA:
+  - A node without the `outboundMta` role stops replying to `DATA` and to JMAP submissions once about 1024 messages have been queued on it.
+  - MX records are resolved through the DNSSEC-validating resolver even when DANE is disabled.
+  - A `DATA` stage Sieve script does not see headers added by milters or MTA hooks, and discards every milter and MTA hook change when it edits the message.
+- MySQL: Range deletions and search index removals start with a single unbounded `DELETE` and switch to chunks only after a timeout.
+- IMAP: `COPY` and `MOVE` fail with `NO [CONTACTADMIN]` when another session changes the same message at the same time.
+- Autodiscover: Implicit TLS ports (993, 995, 465) are advertised with `<Encryption>TLS</Encryption>`, which Outlook reads as STARTTLS.
+- HTTP: Idle keep-alive connections are never closed.
+
+## [0.16.23] - 2026-09-21
+
+If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
+
+## Added
+- Expressions: `bit_and` function.
+
+## Changed
+
+## Fixed
+- MTA: 
+  - A mailing list whose recipients include another mailing list is accepted at `RCPT TO` and then rejected at local delivery with `550 5.5.0 Mailbox not found`.
+  - DMARC aggregate reports carry two `spf` elements per record and the `version` element of a DMARC aggregate report is written as `1` instead of `1.0`.
+  - DSNs generated for an alias rewrite or a list expansion emit a doubled `addr-type` in `Original-Recipient` (`rfc822;rfc822;user@example.org`).
+  - DSNs that cannot be written to the store are discarded, the recipients are flagged as notified and the original message is removed from the queue, losing both the bounce and the message.
+- POP3:
+  - `TOP msg n` counts the `n` lines from the first byte of the message instead of from the first byte of the body.
+  - A message whose very first line begins with `.` is not byte-stuffed.
+- Spam filter: Moving or copying a message from one account into another creates no training sample, so the classifier never learns from it.
+- Sieve: `envelope "orcpt"` yields the bare address for an `ORCPT` supplied over SMTP. It now carries the `addr-type` prefix in every case, as required by RFC 6009.
+- ACME: The `_acme-challenge` TXT records published for a DNS-01 authorization are never removed.
+- DNS: The DNSSEC resolver queries a single nameserver at a time, working around a `hickory-resolver` race that cancels the TCP retry when two nameservers return a truncated response in parallel.
+- Troubleshoot tool:
+  - MX records are resolved through the DNSSEC-validating resolver, matching the resolver used by the delivery path.
+  - A TLSA lookup that fails or returns bogus records stops the delivery attempt for that host, instead of continuing without DANE.
+- OIDC: Bearer tokens that carry no `email`, `preferred_username` or `upn` claim are always authenticated against the default directory.
+- Meilisearch: A confirmation timeout is treated as a failed write even when `failOnTimeout` is disabled, so an index whose batches take longer than `pollInterval` x `maxRetries` never completes an indexing task and resubmits the same batch indefinitely.
+- WebUI: A failed update no longer takes an `Application` offline.
+- FoundationDB: The cached read version is invalidated when any broadcast is received from another node.
+- Redis:
+  - On a cluster, the rate limiter and the blob upload quota issue `INCR` and `EXPIRE` as a `MULTI`/`EXEC` transaction, whose `MOVED` redirects collapse into a single `EXECABORT` that never refreshes the slot map.
+  - A connection that fails because it is addressing the wrong server is returned to the pool and reused, since the recycle check only issues `PING`.
+
+## [0.16.22] - 2026-09-13
+
+If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
+
+## Added
+
+## Changed
+
+## Fixed
+- WebDAV: `PROPFIND` responses do not declare the namespace of every requested property on the `DAV:multistatus` element.
+- MTA: 
+  - SMTP session state obtained before `STARTTLS` is discarded once the TLS handshake completes, as required by RFC 3207.
+  - Inbound throttle, outbound throttle and queue quota `match` expressions evaluate their `if`/`then` conditions.
+  - DMARC: Messages without an aligned SPF or DKIM pass from a domain that publishes a DMARC policy are reported as `fail` instead of `none` in logs.
+  - DMARC: A temporary DNS error on an SPF or DKIM check whose identifier aligns with the author domain produces `temperror` instead of `fail`.
+  - DMARC: A policy record without a `p` tag is only applied, as `p=none`, when it contains a `rua` tag, even if it declares `sp` or `np`.
+- iMIP: Notification subjects and bodies omit the event start date, time and timezone for recurring events.
+- OIDC: Discovery is retried for 30 seconds before the directory is marked as unavailable, so a provider that is still starting up no longer requires a restart.
+- WebUI: The cached bundle of an `Application` is discarded when its `resourceUrl` changes or the record is deleted, so the next unpack fetches the new resource.
+- DNS: Append `.` to MX record hostnames.
+- Recovery mode: Automatic IP banning is disabled during recovery and initial setup.
+- FoundationDB: The cached read version is invalidated when a queue refresh or registry change broadcast is received.
+- Sieve: Messages filed with `fileinto` by a user script are treated as ham and are no longer moved to Junk when classified as spam.
+- IMAP:
+  - `SELECT`, `EXAMINE` and `STATUS` on a shared mailbox require the `r` (read) right.
+  - `AUTHENTICATE` is refused on clear-text connections unless `allowPlainTextAuth` is enabled, and the greeting and `CAPABILITY` response advertise `LOGINDISABLED` instead of the `AUTH=` mechanisms in that case.
+- IMAP, POP3, ManageSieve: Partial commands received before `STARTTLS` or `STLS` are discarded once the TLS handshake completes.
+- Network: Inbound TLS handshakes, both implicit and `STARTTLS`, are aborted after the listener's `tlsTimeout`, releasing the connection slot.
+- OAuth: A random key is used when the OIDC provider's `encryptionKey` or HMAC `signatureKey` cannot be read, instead of an empty key.
+- LDAP: The `{local}` and `{domain}` filter placeholders are escaped.
+- JMAP:
+  - `CalendarEvent/set` stores `useDefaultAlerts` per user, and `CalendarEvent/get` returns `false` when it was never set.
+  - `CalendarEvent/get` returns `null` for `baseEventId` unless the id is a synthetic recurrence instance.
+  - `CalendarEvent/get` returns `null` for requested `recurrenceRule` and `recurrenceOverrides` properties on synthetic recurrence instances.
+  - `CalendarEvent/get` and `ContactCard/get` return only `id` when the `properties` argument is an empty list, instead of every property.
+
+## [0.16.21] - 2026-09-06
+
+If you are upgrading from v0.16.x, replace the binary (or run `docker pull`). If you are upgrading from v0.15.x and below, please read the [upgrading documentation](https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md) for more information on how to upgrade from previous versions.
+
+## Added
+
+## Changed
+- Sieve: Messages generated by user scripts are DKIM signed through the new `SieveUserInterpreter.dkimSignDomain` setting, which defaults to the account's own domain.
+
+## Fixed
+- JMAP:
+  - `CalendarEvent/set` requests that ask for scheduling messages are rejected with a `forbidden` error when the account cannot send them.
+  - `Calendar/get` and `AddressBook/get` return every property when the `properties` argument is omitted or `null`.
+  - EventSource `ping` events advertise the interval in seconds rather than milliseconds.
+  - Calendar synthetic ids returned when expanding recurrences identify an occurrence by its recurrence id.
+- IMAP: Every command in a pipelined `STATUS` or `FETCH` batch receives its tagged completion, instead of the first failing command dropping the responses for all commands queued behind it.
+- WebDAV: Accounts without a storage quota no longer advertise a 4 GiB limit in `DAV:quota-available-bytes`.
+- MTA: Inbound DMARC and TLS aggregate reports that a reporter sends more than once are imported again as a duplicate entry.
+- Spam filter: Domain and URL blocklists are queried only for text written as a link.
+- iTIP: Detaching an occurrence that the recurrence rule already generates is sent as a `METHOD:REQUEST` carrying the `RECURRENCE-ID` instead of a `METHOD:ADD`.
+- Sieve: `fileinto :specialuse` and `specialuse_exists` accept special-use attributes in the `\Trash` form.
+- LDAP: Active Directory servers that answer an unauthenticated bind (a non-empty DN with a zero-length password) with success no longer authenticate accounts without a password.
+- Network: Listeners bound to the unspecified IPv6 address (`[::]`) fall back to IPv4 when socket creation fails with `EPROTONOSUPPORT`.
+- OpenTelemetry: log exporter does not include the parent span's attributes.
 
 ## [0.16.20] - 2026-08-30
 

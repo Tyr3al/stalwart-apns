@@ -84,7 +84,10 @@ impl<T: SessionStream> Session<T> {
                             auth_failures: auth_failures + 1,
                         };
                     } else {
-                        return trc::AuthEvent::TooManyAttempts.into_err().caused_by(err);
+                        return trc::AuthEvent::TooManyAttempts
+                            .into_err()
+                            .caused_by(err)
+                            .id(tag.clone());
                     }
                 }
 
@@ -118,6 +121,7 @@ impl<T: SessionStream> Session<T> {
                         Capability::all_capabilities(
                             true,
                             !self.is_tls && self.instance.acceptor.is_tls(),
+                            true,
                             self.server.core.imap.max_messages_per_command,
                             self.server.core.imap.max_messages_per_save,
                         ),

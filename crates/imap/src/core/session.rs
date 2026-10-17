@@ -136,10 +136,9 @@ impl<T: SessionStream> Session<T> {
         let xaps_ready = server.core.xaps.is_ready();
         #[cfg(not(feature = "xaps"))]
         let xaps_ready = false;
-        let greeting = build_greeting(
-            !is_tls && session.instance.acceptor.is_tls(),
-            xaps_ready,
-        );
+        let offer_tls = !is_tls && session.instance.acceptor.is_tls();
+        let allow_auth = is_tls || server.core.imap.allow_plain_auth;
+        let greeting = build_greeting(offer_tls, allow_auth, xaps_ready);
 
         if let Err(err) = session.stream.write_all(&greeting).await {
             trc::event!(
@@ -211,11 +210,12 @@ impl<T: SessionStream> Session<T> {
         let (stream_rx, stream_tx) =
             tokio::io::split(self.instance.tls_accept(stream, self.session_id).await?);
         let stream_tx = Arc::new(tokio::sync::Mutex::new(stream_tx));
+        let receiver = Receiver::with_max_request_size(self.server.core.imap.max_request_size);
 
         Ok(Session {
             server: self.server,
             instance: self.instance,
-            receiver: self.receiver,
+            receiver,
             version: self.version,
             state: state.try_replace_stream_tx(stream_tx.clone()).unwrap(),
             is_tls: true,

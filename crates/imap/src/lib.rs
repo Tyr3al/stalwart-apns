@@ -15,11 +15,11 @@ static SERVER_GREETING: &str = "Stalwart IMAP4rev2 at your service.";
 
 /// Builds the greeting, hiding the `XAPPLEPUSHSERVICE` capability when XAPS
 /// is not enabled or not fully configured.
-pub(crate) fn build_greeting(is_tls: bool, xaps_ready: bool) -> Vec<u8> {
+pub(crate) fn build_greeting(offer_tls: bool, allow_auth: bool, xaps_ready: bool) -> Vec<u8> {
     StatusResponse::ok(SERVER_GREETING)
         .with_code(ResponseCode::Capability {
             capabilities: filter_xaps_capability(
-                Capability::all_capabilities(false, is_tls, 0, 0),
+                Capability::all_capabilities(false, offer_tls, allow_auth, 0, 0),
                 xaps_ready,
             ),
         })

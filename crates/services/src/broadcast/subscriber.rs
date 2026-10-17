@@ -94,6 +94,13 @@ pub fn spawn_broadcast_subscriber(inner: Arc<Inner>, mut shutdown_rx: watch::Rec
                                     }
                                 };
 
+                                inner
+                                    .shared_core
+                                    .load()
+                                    .storage
+                                    .data
+                                    .invalidate_read_snapshot();
+
                                 loop {
                                     match batch.next_event() {
                                         Ok(Some(event)) => {
