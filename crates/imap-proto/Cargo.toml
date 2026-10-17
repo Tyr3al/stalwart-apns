@@ -1,6 +1,6 @@
 [package]
 name = "imap_proto"
-version = "0.16.21-apns.1"
+version = "0.16.26-apns.1"
 edition = "2024"
 
 [dependencies]
@@ -18,7 +18,6 @@ compact_str = "0.10.0"
 xaps = []
 
 [dev-dependencies]
-tokio = { version = "1.53", features = ["full"] }
 
 [lints]
 workspace = true

@@ -124,6 +124,7 @@ impl SieveScriptIngest for Server {
             .caused_by(trc::location!())?;
 
         // Create Sieve instance
+        let orcpt = envelope_to.orcpt_parameter();
         let mut instance = self.core.sieve.untrusted_runtime.filter_parsed(message);
 
         // Set account name and email
@@ -139,7 +140,7 @@ impl SieveScriptIngest for Server {
         // Set envelope
         instance.set_envelope(Envelope::From, envelope_from);
         instance.set_envelope(Envelope::To, envelope_to.address.as_str());
-        if let Some(orcpt) = &envelope_to.orcpt {
+        if let Some(orcpt) = &orcpt {
             instance.set_envelope(Envelope::Orcpt, orcpt.as_str());
         }
         instance.set_spam_status(spam_status(envelope_to.spam_percentage));
@@ -198,7 +199,7 @@ impl SieveScriptIngest for Server {
                     } => {
                         if !mailboxes.is_empty() {
                             let mut special_use_ids = Vec::with_capacity(special_use.len());
-                            for role in special_use.iter().map(|v| SpecialUse::parse(v)) {
+                            for role in special_use.iter().map(|v| SpecialUse::parse_use_attr(v)) {
                                 special_use_ids.push(match role {
                                     Some(SpecialUse::Inbox) => INBOX_ID,
                                     Some(SpecialUse::Trash) => TRASH_ID,
@@ -239,7 +240,7 @@ impl SieveScriptIngest for Server {
                         } else if !special_use.is_empty() {
                             let mut result = true;
 
-                            for role in special_use.iter().map(|v| SpecialUse::parse(v)) {
+                            for role in special_use.iter().map(|v| SpecialUse::parse_use_attr(v)) {
                                 match role {
                                     Some(SpecialUse::Inbox | SpecialUse::Trash) => {}
                                     Some(other) if cache.mailbox_by_role(&other).is_some() => {}
@@ -327,7 +328,7 @@ impl SieveScriptIngest for Server {
                         // Find mailbox by role
                         if target_id == u32::MAX
                             && let Some(special_use) =
-                                special_use.as_deref().and_then(SpecialUse::parse)
+                                special_use.as_deref().and_then(SpecialUse::parse_use_attr)
                         {
                             match special_use {
                                 SpecialUse::Inbox => {
@@ -554,7 +555,7 @@ impl SieveScriptIngest for Server {
                         source: IngestSource::Smtp {
                             deliver_to: envelope_to.address.as_str(),
                             is_sender_authenticated: envelope_from_authenticated,
-                            is_spam: envelope_to.is_spam(),
+                            is_spam: envelope_to.is_spam() && !sieve_message.did_file_into,
                         },
                         session_id,
                     })

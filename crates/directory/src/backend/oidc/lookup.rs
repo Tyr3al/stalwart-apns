@@ -22,9 +22,9 @@ use trc::AuthEvent;
 impl OpenIdDirectory {
     pub async fn authenticate(&self, credentials: &Credentials) -> trc::Result<Account> {
         match credentials {
-            Credentials::Bearer { token, .. } if token.is_empty() => Err(AuthEvent::Failed
-                .into_err()
-                .reason("Empty token rejected")),
+            Credentials::Bearer { token, .. } if token.is_empty() => {
+                Err(AuthEvent::Failed.into_err().reason("Empty token rejected"))
+            }
             Credentials::Bearer { token, .. } => if let Ok(header) = decode_header(token) {
                 self.authenticate_jwt(token, header).await
             } else {
@@ -82,12 +82,14 @@ impl OpenIdDirectory {
                     self.validate_scopes(&token_data.claims)?;
 
                     let mut claims = token_data.claims;
+                    let missing_username =
+                        is_claim_missing(&claims, Some(&self.config.claim_email));
                     let jwt_email = self.resolve_email(&claims).ok();
                     let missing_profile =
                         is_claim_missing(&claims, self.config.claim_name.as_ref())
                             || is_claim_missing(&claims, self.config.claim_groups.as_ref());
 
-                    if jwt_email.is_none() || missing_profile {
+                    if jwt_email.is_none() || missing_username || missing_profile {
                         match self.fetch_userinfo(token).await {
                             Ok(userinfo) => {
                                 if let (Some(base), Value::Object(extra)) =
@@ -106,8 +108,8 @@ impl OpenIdDirectory {
                     }
 
                     let email = match jwt_email {
-                        Some(email) => email,
-                        None => self.resolve_email(&claims)?,
+                        Some(email) if !missing_username => email,
+                        _ => self.resolve_email(&claims)?,
                     };
                     return self.build_account(email, &claims);
                 }

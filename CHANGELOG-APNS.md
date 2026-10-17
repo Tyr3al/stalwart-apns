@@ -9,10 +9,10 @@ Fork versions follow `<upstream-version>-apns.<N>`, resetting `N` to 1 each time
 fork rebases onto a newer upstream release. Release candidates leading up to a version
 are tagged `-rc.<M>` and marked as a GitHub prerelease.
 
-## [0.16.21-apns.1] - 2026-09-03
+## [0.16.26-apns.1] - 2026-10-17
 
 ### Changed
-- Rebased onto upstream [v0.16.21](https://github.com/stalwartlabs/stalwart/blob/main/CHANGELOG.md) (from v0.16.16), picking up all upstream changes through v0.16.20 plus one additional fix (empty-password LDAP bind rejection). No XAPS-specific behavior changed.
+- Rebased onto upstream [v0.16.26](https://github.com/stalwartlabs/stalwart/blob/main/CHANGELOG.md) (from v0.16.16). No XAPS-specific behavior changed; the `XAPPLEPUSHSERVICE` capability is still only advertised once XAPS is enabled and fully configured, now alongside upstream's `LOGINDISABLED` handling for clear-text connections.
 
 ### Fixed
 - The "Registered Devices" live gauge on the admin Overview dashboard always read 0, even with devices registered. The metric was computed correctly and updated on its `AtomicGauge`, but was never included in the list `collect_gauges()` streams to clients (live SSE feed, Prometheus, OTel export), so the value never reached any consumer.

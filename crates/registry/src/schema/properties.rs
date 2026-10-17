@@ -1045,6 +1045,7 @@ pub enum Property {
     SentinelUsername = 914,
     Separator = 97,
     ServerHostname = 121,
+    ServerId = 934,
     Servers = 308,
     ServiceAccountJson = 316,
     ServiceName = 913,
