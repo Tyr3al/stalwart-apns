@@ -42,7 +42,7 @@ jobs:
       attestations: write
       packages: write
     needs: [linux]
-    if: github.event_name == 'push' || inputs.Docker
+    if: inputs.Docker
     steps:
       - name: Compute lowercase repository (OCI refs require it)
         run: echo "REPO_LC=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
@@ -269,7 +269,7 @@ jobs:
           files: |
             docker-bake.hcl
             ${{ steps.meta.outputs.bake-file }}
-          targets: ${{(github.event_name == 'push' || inputs.Docker) && 'build,image' || 'build'}}
+          targets: ${{inputs.Docker && 'build,image' || 'build'}}
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7.0.1
@@ -280,7 +280,7 @@ jobs:
             !artifact/*.json
 
       - name: Export digest & Rename meta bake definition file
-        if: github.event_name == 'push' || inputs.Docker
+        if: inputs.Docker
         run: |
           mv "${{ steps.meta.outputs.bake-file }}" "${{ runner.temp }}/bake-meta.json"
           mkdir -p ${{ runner.temp }}/digests
@@ -288,7 +288,7 @@ jobs:
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest
-        if: github.event_name == 'push' || inputs.Docker
+        if: inputs.Docker
         uses: actions/upload-artifact@v7.0.1
         with:
           name: digests-${{matrix.suffix == '' && 'gnu' || 'musl'}}-${{ matrix.target }}
@@ -298,7 +298,7 @@ jobs:
 
       - name: Upload GNU meta bake definition
         uses: actions/upload-artifact@v7.0.1
-        if: (github.event_name == 'push' || inputs.Docker) && endsWith(matrix.target,'gnu') && startsWith(matrix.target,'x86')
+        if: inputs.Docker && endsWith(matrix.target,'gnu') && startsWith(matrix.target,'x86')
         with:
           name: bake-meta-gnu
           path: ${{ runner.temp }}/bake-meta.json
@@ -307,7 +307,7 @@ jobs:
 
       - name: Upload musl meta bake definition
         uses: actions/upload-artifact@v7.0.1
-        if: (github.event_name == 'push' || inputs.Docker) && endsWith(matrix.target,'musl') && startsWith(matrix.target,'x86')
+        if: inputs.Docker && endsWith(matrix.target,'musl') && startsWith(matrix.target,'x86')
         with:
           name: bake-meta-musl
           path: ${{ runner.temp }}/bake-meta.json
