@@ -9,6 +9,13 @@ Fork versions follow `<upstream-version>-apns.<N>`, resetting `N` to 1 each time
 fork rebases onto a newer upstream release. Release candidates leading up to a version
 are tagged `-rc.<M>` and marked as a GitHub prerelease.
 
+## [0.16.27-apns.1] - 2026-10-19
+
+### Changed
+- Rebased onto upstream [v0.16.27](https://github.com/stalwartlabs/stalwart/blob/main/CHANGELOG.md). No XAPS-specific behavior changed.
+- Upstream now pins its default WebUI to `stalwartlabs/webui` v1.0.11 and rejects bundles with a major version above 1. The fork's default stays `Tyr3al/webui-apns/releases/latest`, so WebUI fixes still arrive via the Application's update; the new major-version guard applies to it as well.
+- Release tags no longer publish the generic `ghcr.io/tyr3al/stalwart-apns` images; the FoundationDB image `ghcr.io/tyr3al/stalwart-apns/stalwart-apns:<version>` is now built and published by CI for every release (amd64 + arm64).
+
 ## [0.16.26-apns.1] - 2026-10-17
 
 ### Changed

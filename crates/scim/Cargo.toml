@@ -1,6 +1,6 @@
 [package]
 name = "scim"
-version = "0.16.26-apns.1"
+version = "0.16.27-apns.1"
 edition = "2024"
 
 [dependencies]
