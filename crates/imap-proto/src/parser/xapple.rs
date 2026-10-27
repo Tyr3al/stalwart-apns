@@ -34,6 +34,7 @@ impl Request<Command> {
                                 Some(token) => list.push(
                                     token
                                         .unwrap_string()
+                                        .map(String::from)
                                         .map_err(|v| bad(self.tag.to_compact_string(), v))?,
                                 ),
                             }
@@ -55,6 +56,7 @@ impl Request<Command> {
                 let value = match tokens.next() {
                     Some(token) => token
                         .unwrap_string()
+                        .map(String::from)
                         .map_err(|v| bad(self.tag.to_compact_string(), v))?,
                     None => {
                         return Err(bad(
@@ -141,7 +143,7 @@ impl Request<Command> {
         }
 
         Ok(xapple::Arguments {
-            tag: self.tag,
+            tag: self.tag.to_string(),
             aps_version: aps_version.unwrap_or_default(),
             aps_account_id: aps_account_id.unwrap_or_default(),
             aps_device_token: aps_device_token.unwrap_or_default(),
@@ -175,7 +177,8 @@ mod tests {
                     tag: "t1".into(),
                     aps_version: "2".into(),
                     aps_account_id: "0715A26B-CA09-4730-A419-793000CA982E".into(),
-                    aps_device_token: "2918390218931890821908309283098109381029309829018310983092892829".into(),
+                    aps_device_token:
+                        "2918390218931890821908309283098109381029309829018310983092892829".into(),
                     aps_subtopic: "com.apple.mobilemail".into(),
                     mailboxes: vec!["INBOX".into(), "Notes".into()],
                 },
@@ -218,31 +221,39 @@ mod tests {
     #[test]
     fn parse_xapple_push_service_errors() {
         // Missing mailboxes parameter.
-        assert!(parse(
-            "t1 XAPPLEPUSHSERVICE aps-version 2 aps-account-id A aps-device-token B \
+        assert!(
+            parse(
+                "t1 XAPPLEPUSHSERVICE aps-version 2 aps-account-id A aps-device-token B \
              aps-subtopic com.apple.mobilemail\r\n"
-        )
-        .is_err());
+            )
+            .is_err()
+        );
         // Unknown aps-version.
-        assert!(parse(
-            "t2 XAPPLEPUSHSERVICE aps-version 1 aps-account-id A aps-device-token B \
+        assert!(
+            parse(
+                "t2 XAPPLEPUSHSERVICE aps-version 1 aps-account-id A aps-device-token B \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n"
-        )
-        .is_err());
+            )
+            .is_err()
+        );
         // Empty aps-account-id.
-        assert!(parse(
-            "t3 XAPPLEPUSHSERVICE aps-version 2 aps-account-id \"\" aps-device-token B \
+        assert!(
+            parse(
+                "t3 XAPPLEPUSHSERVICE aps-version 2 aps-account-id \"\" aps-device-token B \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n"
-        )
-        .is_err());
+            )
+            .is_err()
+        );
         // Missing value.
         assert!(parse("t4 XAPPLEPUSHSERVICE aps-version\r\n").is_err());
         // Mailboxes without a list.
-        assert!(parse(
-            "t5 XAPPLEPUSHSERVICE aps-version 2 aps-account-id A aps-device-token B \
+        assert!(
+            parse(
+                "t5 XAPPLEPUSHSERVICE aps-version 2 aps-account-id A aps-device-token B \
              aps-subtopic com.apple.mobilemail mailboxes INBOX\r\n"
-        )
-        .is_err());
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -255,7 +266,10 @@ mod tests {
              aps-device-token 6998DB62C8CBAF84F1679F5998F87BE37A9ED5F8D0C5164FDE6897B92C148F42 \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n";
         let result = parse(command).unwrap();
-        assert_eq!(result.aps_account_id, "83DDAC55-EE0B-4D48-93F7-D70D0670869D");
+        assert_eq!(
+            result.aps_account_id,
+            "83DDAC55-EE0B-4D48-93F7-D70D0670869D"
+        );
         assert_eq!(
             result.aps_device_token,
             "6998DB62C8CBAF84F1679F5998F87BE37A9ED5F8D0C5164FDE6897B92C148F42"
@@ -266,69 +280,85 @@ mod tests {
     fn parse_xapple_push_service_rejects_invalid_device_token() {
         // The device token is interpolated into the outgoing APNs request
         // URL, so anything that isn't ASCII hex must be rejected.
-        assert!(parse(
-            "t1 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
+        assert!(
+            parse(
+                "t1 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
              aps-device-token x/../3/device/y \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n"
-        )
-        .is_err());
+            )
+            .is_err()
+        );
         // Shorter than 16 hex chars.
-        assert!(parse(
-            "t2 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
+        assert!(
+            parse(
+                "t2 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
              aps-device-token ABCDEF01 \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n"
-        )
-        .is_err());
+            )
+            .is_err()
+        );
         // Longer than 200 hex chars.
         let long_token = "A".repeat(201);
-        assert!(parse(&format!(
-            "t3 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
+        assert!(
+            parse(&format!(
+                "t3 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
              aps-device-token {long_token} \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n"
-        ))
-        .is_err());
+            ))
+            .is_err()
+        );
         // Multi-byte UTF-8 characters are never valid hex digits.
-        assert!(parse(
-            "t4 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
+        assert!(
+            parse(
+                "t4 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
              aps-device-token abcé0123456789ab \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n"
-        )
-        .is_err());
+            )
+            .is_err()
+        );
         // Exactly 16 and exactly 200 hex chars are both accepted (inclusive
         // bounds).
-        assert!(parse(&format!(
-            "t5 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
+        assert!(
+            parse(&format!(
+                "t5 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
              aps-device-token {} \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n",
-            "A".repeat(16)
-        ))
-        .is_ok());
-        assert!(parse(&format!(
-            "t6 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
+                "A".repeat(16)
+            ))
+            .is_ok()
+        );
+        assert!(
+            parse(&format!(
+                "t6 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
              aps-device-token {} \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n",
-            "A".repeat(200)
-        ))
-        .is_ok());
+                "A".repeat(200)
+            ))
+            .is_ok()
+        );
     }
 
     #[test]
     fn parse_xapple_push_service_rejects_long_account_id() {
         let long_account_id = "A".repeat(65);
-        assert!(parse(&format!(
-            "t1 XAPPLEPUSHSERVICE aps-version 2 aps-account-id {long_account_id} \
+        assert!(
+            parse(&format!(
+                "t1 XAPPLEPUSHSERVICE aps-version 2 aps-account-id {long_account_id} \
              aps-device-token ABCDEF1234567890 \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n"
-        ))
-        .is_err());
+            ))
+            .is_err()
+        );
         // Exactly 64 chars is still accepted.
         let max_account_id = "A".repeat(64);
-        assert!(parse(&format!(
-            "t2 XAPPLEPUSHSERVICE aps-version 2 aps-account-id {max_account_id} \
+        assert!(
+            parse(&format!(
+                "t2 XAPPLEPUSHSERVICE aps-version 2 aps-account-id {max_account_id} \
              aps-device-token ABCDEF1234567890 \
              aps-subtopic com.apple.mobilemail mailboxes (INBOX)\r\n"
-        ))
-        .is_ok());
+            ))
+            .is_ok()
+        );
     }
 
     #[test]
@@ -337,23 +367,27 @@ mod tests {
             .map(|i| format!("Mailbox{i}"))
             .collect::<Vec<_>>()
             .join(" ");
-        assert!(parse(&format!(
-            "t1 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
+        assert!(
+            parse(&format!(
+                "t1 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
              aps-device-token ABCDEF1234567890 aps-subtopic com.apple.mobilemail \
              mailboxes ({mailboxes_33})\r\n"
-        ))
-        .is_err());
+            ))
+            .is_err()
+        );
 
         let mailboxes_32 = (0..32)
             .map(|i| format!("Mailbox{i}"))
             .collect::<Vec<_>>()
             .join(" ");
-        assert!(parse(&format!(
-            "t2 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
+        assert!(
+            parse(&format!(
+                "t2 XAPPLEPUSHSERVICE aps-version 2 aps-account-id ACCOUNT \
              aps-device-token ABCDEF1234567890 aps-subtopic com.apple.mobilemail \
              mailboxes ({mailboxes_32})\r\n"
-        ))
-        .is_ok());
+            ))
+            .is_ok()
+        );
     }
 
     #[test]
@@ -373,12 +407,14 @@ mod tests {
 
         // Commands longer than 32 characters are still rejected.
         let mut receiver: Receiver<Command> = Receiver::new();
-        assert!(receiver
-            .parse(
-                &mut "t2 XAPPLEPUSHSERVICEEXTRA aps-version 2\r\n"
-                    .as_bytes()
-                    .iter(),
-            )
-            .is_err());
+        assert!(
+            receiver
+                .parse(
+                    &mut "t2 XAPPLEPUSHSERVICEEXTRA aps-version 2\r\n"
+                        .as_bytes()
+                        .iter(),
+                )
+                .is_err()
+        );
     }
 }

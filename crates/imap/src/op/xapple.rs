@@ -5,21 +5,13 @@
  */
 
 use crate::core::Session;
-use common::{
-    ipc::PushEvent,
-    network::SessionStream,
-};
-use email::push::xaps::{
-    XAPS_MAX_REGISTRATIONS, XapsRegistration, XapsRegistrations,
-};
-use imap_proto::{
-    Command, ResponseType, StatusResponse,
-    receiver::Request,
-};
+use common::{ipc::PushEvent, network::SessionStream};
+use email::push::xaps::{XAPS_MAX_REGISTRATIONS, XapsRegistration, XapsRegistrations};
+use imap_proto::{Command, ResponseType, StatusResponse, receiver::Request};
 use registry::schema::enums::Permission;
 use store::{
     Serialize, ValueKey,
-    write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
+    write::{Archive, ArchiveBytes, Archiver, BatchBuilder, now},
 };
 use trc::{AddContext, ServerEvent, XapsEvent};
 use types::{collection::Collection, field::PrincipalField};
@@ -65,7 +57,7 @@ impl<T: SessionStream> Session<T> {
         let registrations_archive = self
             .server
             .store()
-            .get_value::<Archive<AlignedBytes>>(ValueKey::property(
+            .get_value::<Archive<ArchiveBytes>>(ValueKey::property(
                 account_id,
                 Collection::Principal,
                 0,

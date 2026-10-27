@@ -37,6 +37,10 @@ pub struct XapsRegistrations {
     pub registrations: Vec<XapsRegistration>,
 }
 
+impl store::write::ArchiveCompression for XapsRegistrations {
+    const COMPRESSION: store::write::Compression = store::write::Compression::None;
+}
+
 impl XapsRegistrations {
     /// Adds or updates a registration, identified by `aps_account_id`.
     /// Returns true if the set of registrations changed.
@@ -91,7 +95,7 @@ impl XapsStats for common::Server {
         for account_id in account_ids {
             let Some(archive) = self
                 .store()
-                .get_value::<store::write::Archive<store::write::AlignedBytes>>(
+                .get_value::<store::write::Archive<store::write::ArchiveBytes>>(
                     store::ValueKey::property(
                         account_id,
                         types::collection::Collection::Principal,

@@ -21,11 +21,7 @@
 //! sufficient, so an XAPS-only admin role and a generic account-management
 //! role both work.
 
-use common::{
-    KV_RATE_LIMIT_XAPS, Server,
-    auth::AccessToken,
-    ipc::PushEvent,
-};
+use common::{KV_RATE_LIMIT_XAPS, Server, auth::AccessToken, ipc::PushEvent};
 use http_proto::{HttpResponse, JsonResponse, ToHttpResponse};
 use hyper::Method;
 use percent_encoding::percent_decode_str;
@@ -36,7 +32,7 @@ use services::state_manager::apns::{
 };
 use store::{
     Serialize as _, ValueKey,
-    write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
+    write::{Archive, ArchiveBytes, Archiver, BatchBuilder, now},
 };
 use trc::{AddContext, LimitEvent};
 use types::{collection::Collection, field::PrincipalField, id::Id};
@@ -84,9 +80,7 @@ pub async fn handle_xaps_api_request(
         let Some(device_id) = path.get(3).copied() else {
             return Err(trc::ResourceEvent::NotFound.into_err());
         };
-        let account = percent_decode_str(account)
-            .decode_utf8_lossy()
-            .into_owned();
+        let account = percent_decode_str(account).decode_utf8_lossy().into_owned();
         let device_id = percent_decode_str(device_id)
             .decode_utf8_lossy()
             .into_owned();
@@ -109,7 +103,6 @@ pub async fn handle_xaps_api_request(
                     count: 10,
                     period: Duration::from_millis(60_000),
                 },
-                false,
             )
             .await?
             .is_some()
@@ -146,7 +139,9 @@ pub async fn handle_xaps_api_request(
             .send_test_notification(&registration.device_token, &registration.aps_account_id)
             .await
         {
-            SendResult::Ok => Ok(JsonResponse::new(TestResult { status: "ok" }).into_http_response()),
+            SendResult::Ok => {
+                Ok(JsonResponse::new(TestResult { status: "ok" }).into_http_response())
+            }
             SendResult::DeviceTokenInactive => {
                 // The device is no longer valid, remove its registration.
                 let _ = delete_xaps_registrations(server, account_id, Some(device_id.as_str()))
@@ -157,10 +152,9 @@ pub async fn handle_xaps_api_request(
                 })
                 .into_http_response())
             }
-            SendResult::Error => Ok(JsonResponse::new(TestResult {
-                status: "error",
-            })
-            .into_http_response()),
+            SendResult::Error => {
+                Ok(JsonResponse::new(TestResult { status: "error" }).into_http_response())
+            }
         }
     } else if path.get(1).copied() != Some("registrations") {
         Err(trc::ResourceEvent::NotFound.into_err())
@@ -168,7 +162,11 @@ pub async fn handle_xaps_api_request(
         match path.get(2).copied() {
             // List all accounts with registered devices (admin only).
             None => {
-                if !has_either_permission(access_token, Permission::SysXapsGet, Permission::SysAccountGet) {
+                if !has_either_permission(
+                    access_token,
+                    Permission::SysXapsGet,
+                    Permission::SysAccountGet,
+                ) {
                     access_token.enforce_permission(Permission::SysAccountGet)?;
                 }
                 let mut accounts = Vec::new();
@@ -192,9 +190,7 @@ pub async fn handle_xaps_api_request(
             }
             // List one account's devices (admin or the account owner).
             Some(account) => {
-                let account = percent_decode_str(account)
-                    .decode_utf8_lossy()
-                    .into_owned();
+                let account = percent_decode_str(account).decode_utf8_lossy().into_owned();
                 let account_id = resolve_and_authorize(
                     server,
                     access_token,
@@ -216,9 +212,7 @@ pub async fn handle_xaps_api_request(
         let Some(account) = path.get(2).copied() else {
             return Err(trc::ResourceEvent::NotFound.into_err());
         };
-        let account = percent_decode_str(account)
-            .decode_utf8_lossy()
-            .into_owned();
+        let account = percent_decode_str(account).decode_utf8_lossy().into_owned();
         let account_id = resolve_and_authorize(
             server,
             access_token,
@@ -227,10 +221,11 @@ pub async fn handle_xaps_api_request(
             Permission::SysAccountUpdate,
         )
         .await?;
-        let device_id = path
-            .get(3)
-            .copied()
-            .map(|device_id| percent_decode_str(device_id).decode_utf8_lossy().into_owned());
+        let device_id = path.get(3).copied().map(|device_id| {
+            percent_decode_str(device_id)
+                .decode_utf8_lossy()
+                .into_owned()
+        });
         let removed = delete_xaps_registrations(server, account_id, device_id.as_deref())
             .await
             .caused_by(trc::location!())?;
@@ -291,7 +286,12 @@ async fn resolve_and_authorize(
 ) -> trc::Result<u32> {
     match resolve_account_id(server, account).await {
         Ok(account_id) => {
-            assert_self_or_admin(access_token, account_id, xaps_permission, account_permission)?;
+            assert_self_or_admin(
+                access_token,
+                account_id,
+                xaps_permission,
+                account_permission,
+            )?;
             Ok(account_id)
         }
         Err(err) => {
@@ -333,10 +333,7 @@ fn parse_account_id(account: &str) -> Option<u32> {
     })
 }
 
-async fn load_xaps_account(
-    server: &Server,
-    account_id: u32,
-) -> trc::Result<Option<XapsAccount>> {
+async fn load_xaps_account(server: &Server, account_id: u32) -> trc::Result<Option<XapsAccount>> {
     let Some(account_cache) = server
         .try_account(account_id)
         .await
@@ -354,10 +351,13 @@ async fn load_xaps_account(
     }))
 }
 
-async fn load_xaps_registrations(server: &Server, account_id: u32) -> trc::Result<Vec<XapsRegistration>> {
+async fn load_xaps_registrations(
+    server: &Server,
+    account_id: u32,
+) -> trc::Result<Vec<XapsRegistration>> {
     let Some(registrations) = server
         .store()
-        .get_value::<Archive<AlignedBytes>>(ValueKey::property(
+        .get_value::<Archive<ArchiveBytes>>(ValueKey::property(
             account_id,
             Collection::Principal,
             0,
@@ -396,7 +396,7 @@ async fn delete_xaps_registrations(
 ) -> trc::Result<bool> {
     let Some(registrations_archive) = server
         .store()
-        .get_value::<Archive<AlignedBytes>>(ValueKey::property(
+        .get_value::<Archive<ArchiveBytes>>(ValueKey::property(
             account_id,
             Collection::Principal,
             0,
@@ -517,10 +517,7 @@ mod tests {
         assert_eq!(mask_token("😀😀😀😀😀😀😀😀"), "****");
         // Longer than 8 chars: must slice on char boundaries without
         // panicking and must not split any individual emoji.
-        assert_eq!(
-            mask_token("😀😀😀😀😀😀😀😀😀😀"),
-            "😀😀😀😀****😀😀😀😀"
-        );
+        assert_eq!(mask_token("😀😀😀😀😀😀😀😀😀😀"), "😀😀😀😀****😀😀😀😀");
     }
 
     #[test]
@@ -533,10 +530,7 @@ mod tests {
         assert_eq!(parse_account_id("A"), None);
         assert_eq!(parse_account_id("a@example.org"), None);
         assert_eq!(parse_account_id("abca"), None);
-        assert_eq!(
-            parse_account_id(&Id::from_parts(1, 42).as_string()),
-            None
-        );
+        assert_eq!(parse_account_id(&Id::from_parts(1, 42).as_string()), None);
     }
 
     #[test]
@@ -568,8 +562,13 @@ mod tests {
         // Foreign account (id 2, tokens are for account 1): admin permission
         // required, either one accepted.
         assert!(
-            assert_self_or_admin(&xaps_only, 2, Permission::SysXapsGet, Permission::SysAccountGet)
-                .is_ok()
+            assert_self_or_admin(
+                &xaps_only,
+                2,
+                Permission::SysXapsGet,
+                Permission::SysAccountGet
+            )
+            .is_ok()
         );
         assert!(
             assert_self_or_admin(
@@ -581,14 +580,24 @@ mod tests {
             .is_ok()
         );
         assert!(
-            assert_self_or_admin(&neither, 2, Permission::SysXapsGet, Permission::SysAccountGet)
-                .is_err()
+            assert_self_or_admin(
+                &neither,
+                2,
+                Permission::SysXapsGet,
+                Permission::SysAccountGet
+            )
+            .is_err()
         );
 
         // Self-service: no permission needed when acting on one's own account.
         assert!(
-            assert_self_or_admin(&neither, 1, Permission::SysXapsGet, Permission::SysAccountGet)
-                .is_ok()
+            assert_self_or_admin(
+                &neither,
+                1,
+                Permission::SysXapsGet,
+                Permission::SysAccountGet
+            )
+            .is_ok()
         );
     }
 

@@ -9,6 +9,17 @@ Fork versions follow `<upstream-version>-apns.<N>`, resetting `N` to 1 each time
 fork rebases onto a newer upstream release. Release candidates leading up to a version
 are tagged `-rc.<M>` and marked as a GitHub prerelease.
 
+## [1.0.0-apns.1] - 2026-10-27
+
+### Changed
+- Rebased onto upstream [v1.0.0](https://github.com/stalwartlabs/stalwart/blob/main/CHANGELOG.md). This is a major upstream release with a new database layout: existing v0.16.x deployments (including `0.16.x-apns.N`) cannot be upgraded in place. Follow upstream's [migration documentation](https://stalw.art/docs/migration/upgrade-0-16/). XAPS device registrations are not carried over; devices re-register on their next IMAP connect.
+- The WebUI bundle must be a v2 bundle: upstream now rejects any other major version. The fork's default stays `Tyr3al/webui-apns/releases/latest`, which is expected to serve the fork's WebUI v2 build; an existing `Application` that still points at a v1 bundle has to be switched to it.
+- The XAPS settings field `enabled` is now `enable`, matching upstream's naming for every other object.
+- Upstream removed the in-tree integration test suite (`tests/`); the fork's CI and `Dockerfile.fdb` no longer reference it.
+- `XAPPLEPUSHSERVICE` is no longer part of the cached IMAP greeting/capability lists; it is appended per connection only while XAPS is enabled and fully configured.
+- Ported to the new IMAP parser (command names longer than 15 characters are still accepted, now up to 32), the compact `MessageData` format (the INBOX check for new-mail pushes now reads it through `message_datas`), and the new registry object layout (`Xaps` is boxed in `ObjectInner`).
+- `p256` moved to 0.14 along with upstream; the APNs JWT and PKCS#12 handling is unchanged.
+
 ## [0.16.27-apns.1] - 2026-10-19
 
 ### Changed
