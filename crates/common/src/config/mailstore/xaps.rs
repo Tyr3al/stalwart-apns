@@ -4,9 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use registry::{
-    schema::{prelude::ObjectType, structs::Xaps},
-};
+use registry::schema::{prelude::ObjectType, structs::Xaps};
 use store::registry::bootstrap::Bootstrap;
 
 #[derive(Default, Clone)]
@@ -54,13 +52,18 @@ impl XapsConfig {
         let has_token_auth = self.key_file_p8.as_deref().is_some_and(|k| !k.is_empty())
             && self.key_id.as_deref().is_some_and(|k| !k.is_empty())
             && self.team_id.as_deref().is_some_and(|k| !k.is_empty());
-        let has_cert_auth =
-            self.certificate_file_pem.as_deref().is_some_and(|c| !c.is_empty())
-                && self.certificate_file_pem_key
-                    .as_deref()
-                    .is_some_and(|k| !k.is_empty());
-        let has_p12_auth =
-            self.certificate_file_p12.as_deref().is_some_and(|c| !c.is_empty());
+        let has_cert_auth = self
+            .certificate_file_pem
+            .as_deref()
+            .is_some_and(|c| !c.is_empty())
+            && self
+                .certificate_file_pem_key
+                .as_deref()
+                .is_some_and(|k| !k.is_empty());
+        let has_p12_auth = self
+            .certificate_file_p12
+            .as_deref()
+            .is_some_and(|c| !c.is_empty());
         has_token_auth || has_cert_auth || has_p12_auth
     }
 }
@@ -140,13 +143,15 @@ impl XapsConfig {
                 );
             }
             let has_token_auth = key_file_p8.as_deref().is_some_and(|k| !k.is_empty());
-            let has_cert_auth =
-                certificate_file_pem.as_deref().is_some_and(|c| !c.is_empty())
-                    && certificate_file_pem_key
-                        .as_deref()
-                        .is_some_and(|k| !k.is_empty());
-            let has_p12_auth =
-                certificate_file_p12.as_deref().is_some_and(|c| !c.is_empty());
+            let has_cert_auth = certificate_file_pem
+                .as_deref()
+                .is_some_and(|c| !c.is_empty())
+                && certificate_file_pem_key
+                    .as_deref()
+                    .is_some_and(|k| !k.is_empty());
+            let has_p12_auth = certificate_file_p12
+                .as_deref()
+                .is_some_and(|c| !c.is_empty());
             if !has_token_auth && !has_cert_auth && !has_p12_auth {
                 bp.build_error(
                     ObjectType::Xaps.singleton(),
@@ -156,8 +161,9 @@ impl XapsConfig {
                      (certificateFileP12) authentication.",
                 );
             }
-            if has_token_auth && (xaps.key_id.as_deref().is_none_or(str::is_empty)
-                || xaps.team_id.as_deref().is_none_or(str::is_empty))
+            if has_token_auth
+                && (xaps.key_id.as_deref().is_none_or(str::is_empty)
+                    || xaps.team_id.as_deref().is_none_or(str::is_empty))
             {
                 bp.build_error(
                     ObjectType::Xaps.singleton(),

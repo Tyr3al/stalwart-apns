@@ -4,14 +4,14 @@
  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
  */
 
-use super::{
-    Event,
-    http::{build_push_client, http_request},
-};
 #[cfg(feature = "xaps")]
 use super::apns::{
     XapsDelayedEvent, XapsDeviceKey, deliver_xaps_notifications, load_xaps_registrations,
     spawn_xaps_delayed,
+};
+use super::{
+    Event,
+    http::{build_push_client, http_request},
 };
 use crate::state_manager::{PushBatch, PushRegistration};
 use common::{
@@ -20,7 +20,6 @@ use common::{
     ipc::{PushEvent, PushNotification},
 };
 use email::push::{PushSubscription, PushSubscriptions, Urgency};
-use reqwest::Client;
 use std::{
     collections::hash_map::Entry,
     sync::Arc,
@@ -29,17 +28,35 @@ use std::{
 use store::{
     ValueKey,
     ahash::{AHashMap, AHashSet},
-    write::{AlignedBytes, Archive, now},
+    write::{Archive, ArchiveBytes, now},
 };
 use tokio::sync::mpsc;
-use trc::{AddContext, PushSubscriptionEvent, ServerEvent, XapsEvent};
-use types::{collection::Collection, field::PrincipalField, id::Id};
+#[cfg(feature = "xaps")]
+use trc::XapsEvent;
+use trc::{AddContext, PushSubscriptionEvent, ServerEvent};
 #[cfg(feature = "xaps")]
 use types::type_state::DataType;
+use types::{collection::Collection, field::PrincipalField, id::Id};
+use utils::outbound::OutboundClient;
 
 pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
     let (push_tx_, mut push_rx) = mpsc::channel::<Event>(IPC_CHANNEL_BUFFER);
     let push_tx = push_tx_.clone();
+    let (register_tx, mut register_rx) = mpsc::unbounded_channel::<PushEvent>();
+    let router_tx = inner.ipc.push_tx.clone();
+
+    tokio::spawn(async move {
+        while let Some(event) = register_rx.recv().await {
+            if router_tx.send(event).await.is_err() {
+                trc::event!(
+                    Server(ServerEvent::ThreadError),
+                    Details = "Error sending push server registration.",
+                    CausedBy = trc::location!()
+                );
+                break;
+            }
+        }
+    });
 
     // Spawn the delayed XAPS notification task (dovecot-xaps-daemon's
     // `delayedApns` map).
@@ -154,21 +171,16 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                 }
 
                 // Subscribe to push events
-                let mut activate_account_ids =
-                    account_push_ids.keys().copied().collect::<Vec<_>>();
+                #[allow(unused_mut)]
+                let mut activate_account_ids = account_push_ids.keys().copied().collect::<Vec<_>>();
                 #[cfg(feature = "xaps")]
                 activate_account_ids.extend(xaps_account_ids.iter().copied());
                 if !activate_account_ids.is_empty()
-                    && server
-                        .inner
-                        .ipc
-                        .push_tx
-                        .clone()
+                    && register_tx
                         .send(PushEvent::PushServerRegister {
                             activate: activate_account_ids,
                             expired: vec![],
                         })
-                        .await
                         .is_err()
                 {
                     trc::event!(
@@ -293,7 +305,7 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                         if let Some(subscription) = newest_unverified {
                             let current_time = Instant::now();
 
-                            #[cfg(feature = "test_mode")]
+                            #[cfg(stalwart_tests)]
                             if subscription.url.contains("skip_checks") {
                                 last_verify.remove(&account_id);
                             }
@@ -394,16 +406,11 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                             }
                         }
                         if (!active_account_ids.is_empty() || !inactive_account_ids.is_empty())
-                            && server
-                                .inner
-                                .ipc
-                                .push_tx
-                                .clone()
+                            && register_tx
                                 .send(PushEvent::PushServerRegister {
                                     activate: active_account_ids,
                                     expired: inactive_account_ids,
                                 })
-                                .await
                                 .is_err()
                         {
                             trc::event!(
@@ -417,20 +424,16 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                         #[cfg(feature = "xaps")]
                         {
                             if server.core.xaps.enabled {
-                                let has_xaps_registrations = match load_xaps_registrations(
-                                    &server, account_id,
-                                )
-                                .await
-                                {
-                                    Ok(registrations) => {
-                                        !registrations.is_none_or(|r| r.registrations.is_empty())
-                                    }
-                                    Err(err) => {
-                                        // Do not unregister on transient read failures.
-                                        trc::error!(err.caused_by(trc::location!()));
-                                        continue;
-                                    }
-                                };
+                                let has_xaps_registrations =
+                                    match load_xaps_registrations(&server, account_id).await {
+                                        Ok(registrations) => !registrations
+                                            .is_none_or(|r| r.registrations.is_empty()),
+                                        Err(err) => {
+                                            // Do not unregister on transient read failures.
+                                            trc::error!(err.caused_by(trc::location!()));
+                                            continue;
+                                        }
+                                    };
                                 let mut xaps_activate = Vec::new();
                                 let mut xaps_expired = Vec::new();
                                 match (
@@ -453,16 +456,11 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                                     _ => {}
                                 }
                                 if (!xaps_activate.is_empty() || !xaps_expired.is_empty())
-                                    && server
-                                        .inner
-                                        .ipc
-                                        .push_tx
-                                        .clone()
+                                    && register_tx
                                         .send(PushEvent::PushServerRegister {
                                             activate: xaps_activate,
                                             expired: xaps_expired,
                                         })
-                                        .await
                                         .is_err()
                                 {
                                     trc::event!(
@@ -475,7 +473,7 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                         }
                     }
                     Event::Push { notification } => {
-                        let account_id = notification.account_id();
+                        let account_id = notification.recipient();
 
                         // Deliver XAPS (Apple push) notifications for accounts
                         // with registered devices.
@@ -502,12 +500,8 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                                 && xaps_account_ids.contains(&account_id)
                                 && let PushNotification::StateChange(state_change) = &notification
                                 && state_change.types.contains_any(
-                                    [
-                                        DataType::Email,
-                                        DataType::Mailbox,
-                                        DataType::Thread,
-                                    ]
-                                    .into_iter(),
+                                    [DataType::Email, DataType::Mailbox, DataType::Thread]
+                                        .into_iter(),
                                 )
                                 && !state_change.types.contains(DataType::EmailDelivery)
                             {
@@ -528,8 +522,7 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                                                             account_id,
                                                             aps_account_id: registration
                                                                 .aps_account_id,
-                                                            device_token:
-                                                                registration.device_token,
+                                                            device_token: registration.device_token,
                                                         },
                                                         due,
                                                         attempts: 0,
@@ -554,7 +547,6 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                                 }
                             }
                         }
-
                         if let Some(ids) = account_push_ids.get_mut(&account_id) {
                             let current_time = now();
                             let mut remove_ids = Vec::new();
@@ -614,16 +606,11 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
                                 }
                                 if ids.is_empty() {
                                     account_push_ids.remove(&account_id);
-                                    if server
-                                        .inner
-                                        .ipc
-                                        .push_tx
-                                        .clone()
+                                    if register_tx
                                         .send(PushEvent::PushServerRegister {
                                             activate: vec![],
                                             expired: vec![account_id],
                                         })
-                                        .await
                                         .is_err()
                                     {
                                         trc::event!(
@@ -729,7 +716,7 @@ pub fn spawn_push_manager(inner: Arc<Inner>) -> mpsc::Sender<Event> {
 }
 
 fn send_verification(
-    push_client: &Client,
+    push_client: &OutboundClient,
     subscription: Arc<PushSubscription>,
     server: &Server,
     push_timeout: Duration,
@@ -772,7 +759,7 @@ async fn load_push_subscriptions(
 
     if let Some(push_subscriptions) = server
         .store()
-        .get_value::<Archive<AlignedBytes>>(ValueKey::property(
+        .get_value::<Archive<ArchiveBytes>>(ValueKey::property(
             account_id,
             Collection::Principal,
             0,

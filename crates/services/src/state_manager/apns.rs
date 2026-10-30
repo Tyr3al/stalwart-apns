@@ -8,15 +8,9 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use common::{
-    BuildServer, Inner, Server,
-    config::mailstore::xaps::XapsConfig,
-    ipc::EmailPush,
-};
+use common::{BuildServer, Inner, Server, config::mailstore::xaps::XapsConfig, ipc::EmailPush};
 use email::{
-    mailbox::INBOX_ID,
-    message::metadata::MessageData,
-    push::xaps::XapsRegistrations,
+    mailbox::INBOX_ID, message::messagedata::EmailMessageData, push::xaps::XapsRegistrations,
 };
 use p256::{
     ecdsa::{Signature, SigningKey, signature::Signer},
@@ -31,7 +25,7 @@ use std::{
 use store::{
     Serialize, ValueKey,
     ahash::AHashMap,
-    write::{AlignedBytes, Archive, Archiver, BatchBuilder, now},
+    write::{Archive, ArchiveBytes, Archiver, BatchBuilder, now},
 };
 use tokio::sync::mpsc;
 use trc::{AddContext, XapsEvent};
@@ -193,10 +187,17 @@ impl ApnsClient {
                     return None;
                 }
             };
-            let password = config.certificate_file_p12_password.as_deref().unwrap_or("");
+            let password = config
+                .certificate_file_p12_password
+                .as_deref()
+                .unwrap_or("");
             let (Some(cert), Some(key)) = (
-                pfx.cert_x509_bags(password).ok().and_then(|c| c.into_iter().next()),
-                pfx.key_bags(password).ok().and_then(|k| k.into_iter().next()),
+                pfx.cert_x509_bags(password)
+                    .ok()
+                    .and_then(|c| c.into_iter().next()),
+                pfx.key_bags(password)
+                    .ok()
+                    .and_then(|k| k.into_iter().next()),
             ) else {
                 trc::event!(
                     Xaps(XapsEvent::Error),
@@ -301,11 +302,7 @@ impl ApnsClient {
     /// payload as a real XAPS delivery. Native Mail XAPS topics do not support
     /// arbitrary visible alerts, so the test verifies that APNs accepts the
     /// production notification format.
-    pub async fn send_test_notification(
-        &self,
-        device_token: &str,
-        account_id: &str,
-    ) -> SendResult {
+    pub async fn send_test_notification(&self, device_token: &str, account_id: &str) -> SendResult {
         self.send_notification(device_token, account_id).await
     }
 
@@ -344,7 +341,9 @@ impl ApnsClient {
                 } else if status == reqwest::StatusCode::GONE {
                     trc::event!(
                         Xaps(XapsEvent::DeviceTokenInactive),
-                        Details = format!("APNs device token is no longer active for account {account_id}"),
+                        Details = format!(
+                            "APNs device token is no longer active for account {account_id}"
+                        ),
                     );
                     SendResult::DeviceTokenInactive
                 } else {
@@ -392,36 +391,39 @@ pub async fn deliver_xaps_notifications(
     };
 
     // Only notify for messages delivered to the inbox (INBOX_ID = 0).
-    let Some(message_data) = server
-        .store()
-        .get_value::<Archive<AlignedBytes>>(ValueKey::archive(
+    let mut in_inbox = false;
+    if server
+        .message_datas(
             email_push.account_id,
-            Collection::Email,
-            email_push.email_id,
-        ))
+            &email_push.email_id,
+            |_, message_data| {
+                in_inbox = message_data
+                    .mailboxes
+                    .iter()
+                    .any(|m| m.mailbox_id == INBOX_ID);
+                Ok(false)
+            },
+        )
         .await
         .caused_by(trc::location!())
-        .ok()
-        .flatten()
-    else {
-        return;
-    };
-    let Ok(message_data) = message_data.deserialize::<MessageData>() else {
-        return;
-    };
-    if !message_data.mailboxes.iter().any(|m| m.mailbox_id == INBOX_ID) {
+        .is_err()
+        || !in_inbox
+    {
         return;
     }
 
     // Load the account's device registrations.
-    let Ok(Some(registrations)) =
-        load_xaps_registrations(&server, email_push.account_id).await
+    let Ok(Some(registrations)) = load_xaps_registrations(&server, email_push.account_id).await
     else {
         return;
     };
 
     for registration in registrations.registrations {
-        if registration.mailboxes.iter().any(|m| m.eq_ignore_ascii_case("INBOX")) {
+        if registration
+            .mailboxes
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("INBOX"))
+        {
             let key = XapsDeviceKey {
                 account_id: email_push.account_id,
                 aps_account_id: registration.aps_account_id.clone(),
@@ -435,16 +437,12 @@ pub async fn deliver_xaps_notifications(
                     // The immediate push supersedes any pending delayed
                     // notification for this device.
                     if let Some(xaps_delayed_tx) = &xaps_delayed_tx {
-                        let _ = xaps_delayed_tx
-                            .send(XapsDelayedEvent::Remove { key })
-                            .await;
+                        let _ = xaps_delayed_tx.send(XapsDelayedEvent::Remove { key }).await;
                     }
                 }
                 SendResult::DeviceTokenInactive => {
                     if let Some(xaps_delayed_tx) = &xaps_delayed_tx {
-                        let _ = xaps_delayed_tx
-                            .send(XapsDelayedEvent::Remove { key })
-                            .await;
+                        let _ = xaps_delayed_tx.send(XapsDelayedEvent::Remove { key }).await;
                     }
                     delete_xaps_registration(
                         &server,
@@ -477,7 +475,7 @@ pub async fn load_xaps_registrations(
 ) -> trc::Result<Option<XapsRegistrations>> {
     let Some(registrations) = server
         .store()
-        .get_value::<Archive<AlignedBytes>>(ValueKey::property(
+        .get_value::<Archive<ArchiveBytes>>(ValueKey::property(
             account_id,
             Collection::Principal,
             0,
@@ -504,7 +502,7 @@ async fn delete_xaps_registration(server: &Server, account_id: u32, aps_account_
     // different device).
     let Ok(Some(registrations_archive)) = server
         .store()
-        .get_value::<Archive<AlignedBytes>>(ValueKey::property(
+        .get_value::<Archive<ArchiveBytes>>(ValueKey::property(
             account_id,
             Collection::Principal,
             0,
@@ -728,12 +726,12 @@ fn collect_due(
 mod tests {
     use super::*;
     use p256::{
-        elliptic_curve::rand_core::OsRng,
+        elliptic_curve::Generate,
         pkcs8::{EncodePrivateKey, LineEnding},
     };
 
     fn test_config() -> XapsConfig {
-        let signing_key = p256::ecdsa::SigningKey::random(&mut OsRng);
+        let signing_key = p256::ecdsa::SigningKey::generate();
         XapsConfig {
             enabled: true,
             topic: Some("com.apple.mail".to_string()),
@@ -780,7 +778,9 @@ mod tests {
         let t2 = client.token(1_700_000_000 + 1000).unwrap();
         assert_eq!(t1, t2);
         // After more than an hour a new token is issued.
-        let t3 = client.token(1_700_000_000 + 2 * APNS_TOKEN_TTL_SECS).unwrap();
+        let t3 = client
+            .token(1_700_000_000 + 2 * APNS_TOKEN_TTL_SECS)
+            .unwrap();
         assert_ne!(t1, t3);
     }
 
@@ -790,8 +790,7 @@ mod tests {
         // The payload is built inline in send_notification; assert the shape
         // via the client's topic/sandbox selection instead.
         assert_eq!(
-            client.host,
-            APNS_SANDBOX_HOST,
+            client.host, APNS_SANDBOX_HOST,
             "sandbox config must select the sandbox host"
         );
         assert_eq!(client.topic, "com.apple.mail");
@@ -921,7 +920,10 @@ mod tests {
             check_interval: 20,
         };
         let client = ApnsClient::try_new(&config).unwrap();
-        assert!(client.token_auth.is_none(), "cert auth must not use token auth");
+        assert!(
+            client.token_auth.is_none(),
+            "cert auth must not use token auth"
+        );
         assert_eq!(client.host, APNS_PRODUCTION_HOST);
         assert_eq!(client.topic, "com.apple.mail");
     }

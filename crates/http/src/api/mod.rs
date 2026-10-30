@@ -15,9 +15,11 @@ pub mod diagnose;
 pub mod xaps;
 
 use crate::{
-    api::diagnose::{DeliveryStage, spawn_delivery_diagnose},
+    api::diagnose::{DeliveryStage, DeliveryTarget, spawn_delivery_diagnose},
     auth::{
-        authenticate::Authenticator, oauth::auth::OAuthApiHandler, permissions::AccountApiHandler,
+        authenticate::{Authenticator, HttpAuthenticated},
+        oauth::{auth::OAuthApiHandler, request_origin},
+        permissions::AccountApiHandler,
     },
 };
 use common::{
@@ -74,10 +76,21 @@ impl ManagementApi for Server {
             "auth" if is_post => {
                 self.is_http_anonymous_request_allowed(session.remote_ip)
                     .await?;
-                Box::pin(self.handle_login_request(
+                self.handle_login_request(
                     session,
+                    request_origin(req, session),
                     body.ok_or_else(|| trc::LimitEvent::SizeRequest.into_err())?,
-                ))
+                )
+                .await
+            }
+            "auth" if path.get(1).copied() == Some("client") => {
+                self.is_http_anonymous_request_allowed(session.remote_ip)
+                    .await?;
+                self.handle_client_info_request(
+                    session,
+                    request_origin(req, session),
+                    req.uri().query().unwrap_or_default(),
+                )
                 .await
             }
             "calendar"
@@ -103,32 +116,59 @@ impl ManagementApi for Server {
                 if let Some(email) = path.get(1).copied() {
                     self.is_http_anonymous_request_allowed(session.remote_ip)
                         .await?;
-                    self.handle_discover_request(session, decode_path_element(email).as_ref())
-                        .await
+                    self.handle_discover_request(
+                        session,
+                        request_origin(req, session),
+                        decode_path_element(email).as_ref(),
+                    )
+                    .await
                 } else {
                     Err(trc::ResourceEvent::NotFound.into_err())
                 }
             }
             "account" => {
                 // Authenticate request
-                let (_in_flight, access_token) = self.authenticate_headers(req, session).await?;
+                let HttpAuthenticated {
+                    in_flight: _in_flight,
+                    access_token,
+                    ..
+                } = self.authenticate_headers(req, session).await?;
                 self.handle_account_request(&access_token).await
             }
             "schema" => {
                 // Authenticate request
-                let (_in_flight, access_token) = self.authenticate_headers(req, session).await?;
+                let HttpAuthenticated {
+                    in_flight: _in_flight,
+                    access_token,
+                    ..
+                } = self.authenticate_headers(req, session).await?;
+                // SPDX-SnippetBegin
+                // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+                // SPDX-License-Identifier: LicenseRef-SEL
+                #[cfg(feature = "enterprise")]
                 static SCHEMA_JSON: &[u8] =
                     include_bytes!("../../../../resources/schema/schema.json.gz");
+                #[cfg(feature = "enterprise")]
+                const SCHEMA_HASH: &str =
+                    include_str!("../../../../resources/schema/schema.json.sha256");
+                // SPDX-SnippetEnd
+
+                #[cfg(not(feature = "enterprise"))]
+                static SCHEMA_JSON: &[u8] =
+                    include_bytes!("../../../../resources/schema/schema_oss.json.gz");
+                #[cfg(not(feature = "enterprise"))]
+                const SCHEMA_HASH: &str =
+                    include_str!("../../../../resources/schema/schema_oss.json.sha256");
+
                 // .trim() defensively: this is embedded via include_str!, so a stray
                 // trailing newline in the checked-in resource file (however it gets
                 // regenerated) would otherwise end up in a Location header value,
                 // which the http crate rejects (InvalidHeaderValue) instead of
                 // silently stripping.
-                let schema_hash: &str =
-                    include_str!("../../../../resources/schema/schema.json.sha256").trim();
+                let schema_hash = SCHEMA_HASH.trim();
 
                 if path.get(1).is_some_and(|hash| hash == &schema_hash) {
-                    Ok(Resource::new("application/json", SCHEMA_JSON.to_vec())
+                    Ok(Resource::new("application/json", SCHEMA_JSON)
                         .into_http_response()
                         .with_immutable_cache()
                         .with_header(CONTENT_ENCODING, "gzip"))
@@ -139,7 +179,11 @@ impl ManagementApi for Server {
             #[cfg(feature = "xaps")]
             "xaps" => {
                 // Authenticate request
-                let (_in_flight, access_token) = self.authenticate_headers(req, session).await?;
+                let HttpAuthenticated {
+                    in_flight: _in_flight,
+                    access_token,
+                    ..
+                } = self.authenticate_headers(req, session).await?;
                 crate::api::xaps::handle_xaps_api_request(self, &path, &access_token, req.method())
                     .await
             }
@@ -238,11 +282,13 @@ impl ManagementApi for Server {
                                 .unwrap_or(30),
                         );
 
-                        let mut rx = spawn_delivery_diagnose(
-                            self.clone(),
-                            decode_path_element(target).to_lowercase(),
-                            timeout,
-                        );
+                        let target = DeliveryTarget::parse(&decode_path_element(target))
+                            .ok_or_else(|| {
+                                trc::ResourceEvent::BadParameters
+                                    .into_err()
+                                    .details("Invalid delivery target")
+                            })?;
+                        let mut rx = spawn_delivery_diagnose(self.clone(), target, timeout);
 
                         Ok(HttpResponse::new(StatusCode::OK)
                             .with_content_type("text/event-stream")
@@ -329,26 +375,37 @@ impl ManagementApi for Server {
             } else {
                 self.authenticate_headers(req, session)
                     .await
-                    .map(|(_, token)| token)
+                    .map(|auth| auth.access_token)
             }
         } else {
             self.authenticate_headers(req, session)
                 .await
-                .map(|(_, token)| token)
+                .map(|auth| auth.access_token)
         }
     }
 }
 
 pub trait ToManageHttpResponse {
-    fn into_http_response(self, challenge: AuthChallenge) -> HttpResponse;
+    fn into_http_response(
+        self,
+        challenge: AuthChallenge,
+        resource_metadata: impl FnOnce() -> String,
+    ) -> HttpResponse;
 }
 
 impl ToManageHttpResponse for &trc::Error {
-    fn into_http_response(self, challenge: AuthChallenge) -> HttpResponse {
+    fn into_http_response(
+        self,
+        challenge: AuthChallenge,
+        resource_metadata: impl FnOnce() -> String,
+    ) -> HttpResponse {
         match self.as_ref() {
             trc::EventType::Auth(
-                trc::AuthEvent::Failed | trc::AuthEvent::Error | trc::AuthEvent::TokenExpired,
-            ) => HttpResponse::unauthorized(challenge),
+                trc::AuthEvent::Failed
+                | trc::AuthEvent::Error
+                | trc::AuthEvent::TokenExpired
+                | trc::AuthEvent::CredentialExpired,
+            ) => HttpResponse::unauthorized(challenge, &resource_metadata()),
             _ => self.to_request_error().into_http_response(),
         }
     }
@@ -366,11 +423,7 @@ pub fn accept_language(req: &HttpRequest) -> &str {
         .unwrap_or("en")
 }
 
-const BEARER_CHALLENGE: &str = concat!(
-    "Bearer realm=\"Stalwart Server\", ",
-    "resource_metadata=\"/.well-known/oauth-protected-resource\""
-);
-const BASIC_CHALLENGE: &str = "Basic realm=\"Stalwart Server\"";
+pub(crate) const BASIC_CHALLENGE: &str = "Basic realm=\"Stalwart Server\"";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthChallenge {
@@ -379,13 +432,15 @@ pub enum AuthChallenge {
 }
 
 pub trait UnauthorizedResponse {
-    fn unauthorized(challenge: AuthChallenge) -> Self;
+    fn unauthorized(challenge: AuthChallenge, resource_metadata: &str) -> Self;
 }
 
 impl UnauthorizedResponse for HttpResponse {
-    fn unauthorized(challenge: AuthChallenge) -> Self {
-        let response = HttpResponse::new(StatusCode::UNAUTHORIZED)
-            .with_header(header::WWW_AUTHENTICATE, BEARER_CHALLENGE);
+    fn unauthorized(challenge: AuthChallenge, resource_metadata: &str) -> Self {
+        let response = HttpResponse::new(StatusCode::UNAUTHORIZED).with_header(
+            header::WWW_AUTHENTICATE,
+            format!("Bearer realm=\"Stalwart Server\", resource_metadata=\"{resource_metadata}\""),
+        );
 
         if challenge == AuthChallenge::BearerAndBasic {
             response.with_header(header::WWW_AUTHENTICATE, BASIC_CHALLENGE)

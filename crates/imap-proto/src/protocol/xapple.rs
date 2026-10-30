@@ -32,9 +32,7 @@ mod tests {
         // dovecot-xaps-plugin's xaps-imap-plugin.c.
         let response = StatusResponse::completed(Command::XApplePushService)
             .with_tag("t1")
-            .serialize(
-                b"* XAPPLEPUSHSERVICE aps-version 2 aps-topic com.apple.mail\r\n".to_vec(),
-            );
+            .serialize(b"* XAPPLEPUSHSERVICE aps-version 2 aps-topic com.apple.mail\r\n".to_vec());
         assert_eq!(
             response,
             b"* XAPPLEPUSHSERVICE aps-version 2 aps-topic com.apple.mail\r\n\

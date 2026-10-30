@@ -95,3 +95,8 @@ impl Urgency {
         }
     }
 }
+
+impl store::write::ArchiveCompression for PushSubscriptions {
+    const COMPRESSION: store::write::Compression =
+        store::write::Compression::Zstd(Some(store::write::Dictionary::Common));
+}
