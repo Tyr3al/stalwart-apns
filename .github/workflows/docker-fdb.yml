@@ -59,6 +59,32 @@ jobs:
           sudo docker image prune --all --force || true
           df -h /
 
+      # The final `cargo build` links the whole binary with fat LTO and a single codegen unit,
+      # which exceeds the arm64 runner's RAM and gets OOM-killed (signal 9). Same swapfile as
+      # the ARM targets in ci.yml.
+      - name: Add swap (arm64)
+        if: matrix.platform == 'linux/arm64'
+        run: |
+          swap_dir=""
+          for dir in /mnt /; do
+            if [ -d "$dir" ] && [ "$(df --output=avail -k "$dir" | tail -1)" -ge 18874368 ]; then
+              swap_dir="$dir"
+              break
+            fi
+          done
+          if [ -z "$swap_dir" ]; then
+            echo "Insufficient space for swap on /mnt or /, aborting swap setup"
+            df -h
+            exit 1
+          fi
+          sudo fallocate -l 16G "${swap_dir%/}/swapfile"
+          sudo chmod 600 "${swap_dir%/}/swapfile"
+          sudo mkswap "${swap_dir%/}/swapfile"
+          sudo swapon "${swap_dir%/}/swapfile"
+          sudo sysctl vm.swappiness=80
+          free -h
+          swapon --show
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
