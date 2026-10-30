@@ -1,6 +1,6 @@
 [package]
 name = "imap"
-version = "1.0.0-apns.1"
+version = "1.0.1-apns.1"
 edition = "2024"
 
 [dependencies]
