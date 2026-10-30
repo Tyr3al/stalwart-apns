@@ -9,6 +9,15 @@ Fork versions follow `<upstream-version>-apns.<N>`, resetting `N` to 1 each time
 fork rebases onto a newer upstream release. Release candidates leading up to a version
 are tagged `-rc.<M>` and marked as a GitHub prerelease.
 
+## [0.16.27-apns.2] - 2026-10-30
+
+### Fixed
+- The release builds failed (`v0.16.27-apns.1` has no working artifacts): upstream's `stalwartlabs/opentelemetry-rust` git dependency, pinned by this version's lockfile, is no longer available. It is now taken from `Tyr3al/opentelemetry-rust`, a mirror of the exact same commit (`ae66e97b`), so the binary is unchanged.
+- The arm64 FoundationDB image build no longer gets OOM-killed during the final link: it adds the same swapfile the generic ARM builds use.
+
+### Notes
+- This is a maintenance release on `release/0.16` for the v0.16.x to v1.0.0 migration path: v1.0.0 can only be reached from a database that is on v0.16.27. No XAPS-specific behavior changed.
+
 ## [0.16.27-apns.1] - 2026-10-19
 
 ### Changed
