@@ -9,6 +9,13 @@ Fork versions follow `<upstream-version>-apns.<N>`, resetting `N` to 1 each time
 fork rebases onto a newer upstream release. Release candidates leading up to a version
 are tagged `-rc.<M>` and marked as a GitHub prerelease.
 
+## [1.0.1-apns.1] - 2026-10-30
+
+### Changed
+- Rebased onto upstream [v1.0.1](https://github.com/stalwartlabs/stalwart/blob/main/CHANGELOG.md) (from v1.0.0). No XAPS-specific behavior changed. Upstream's new OpenTelemetry/Prometheus exporters and the `telemetry` crate are picked up as-is; the XAPS counters and the "Registered Devices" gauge keep working through the existing metric plumbing.
+- The admin schema was regenerated from upstream's 1.0.1 schema with the XAPS settings, permissions, menu entries and dashboard cards re-applied.
+- WebUI: works with `Tyr3al/webui-apns` `2.0.1-apns.1` and later 2.x (the matching rebase onto upstream WebUI 2.0.2/2.0.3 ships as `2.0.3-apns.1`).
+
 ## [1.0.0-apns.1] - 2026-10-27
 
 ### Changed
