@@ -12,7 +12,13 @@ pub struct Semver(u64);
 
 impl Semver {
     pub fn current() -> Self {
-        env!("CARGO_PKG_VERSION").try_into().unwrap()
+        // Ignore pre-release and build metadata (e.g. the fork's "-apns.N" suffix)
+        let version = env!("CARGO_PKG_VERSION");
+        version
+            .split_once(['-', '+'])
+            .map_or(version, |(version, _)| version)
+            .try_into()
+            .unwrap()
     }
 
     pub fn new(major: u16, minor: u16, patch: u16) -> Self {
@@ -76,5 +82,17 @@ impl Display for Semver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (major, minor, patch) = self.unpack();
         write!(f, "{major}.{minor}.{patch}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Semver;
+
+    #[test]
+    fn current_ignores_pre_release_suffix() {
+        let current = Semver::current();
+        assert!(current.is_valid());
+        assert!(env!("CARGO_PKG_VERSION").starts_with(&current.to_string()));
     }
 }

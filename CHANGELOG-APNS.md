@@ -9,6 +9,11 @@ Fork versions follow `<upstream-version>-apns.<N>`, resetting `N` to 1 each time
 fork rebases onto a newer upstream release. Release candidates leading up to a version
 are tagged `-rc.<M>` and marked as a GitHub prerelease.
 
+## [Unreleased]
+
+### Fixed
+- The WebUI never loaded: `Semver::current()` parsed the full crate version `1.0.1-apns.1` and panicked on the `-apns.1` suffix whenever an application bundle declared `minServerVersion` (as `webui-apns` 2.x does), logging "Bundle unpack task panicked" and serving no bundle for `admin` and `account`. The pre-release and build-metadata suffix is now ignored, like `parse_version` already does for bundle versions.
+
 ## [1.0.1-apns.1] - 2026-10-30
 
 ### Changed
