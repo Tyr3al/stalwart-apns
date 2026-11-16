@@ -45,6 +45,8 @@ static STORE_BLOB_WRITE_TIME: AtomicHistogram<12> =
 
 static DNS_LOOKUP_TIME: AtomicHistogram<12> =
     AtomicHistogram::<10>::new_short_durations(MetricType::DnsLookupTime);
+static ENCRYPTION_KEY_LOOKUP_TIME: AtomicHistogram<12> =
+    AtomicHistogram::<10>::new_short_durations(MetricType::EncryptionKeyLookupTime);
 
 // SPDX-SnippetBegin
 // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
@@ -213,6 +215,9 @@ impl Collector {
             {
                 DNS_LOOKUP_TIME.observe(elapsed);
             }
+            EventType::Encryption(EncryptionEvent::KeyLookup) => {
+                ENCRYPTION_KEY_LOOKUP_TIME.observe(elapsed);
+            }
             EventType::MessageIngest(
                 MessageIngestEvent::Ham
                 | MessageIngestEvent::Spam
@@ -370,6 +375,7 @@ impl Collector {
             &STORE_BLOB_READ_TIME,
             &STORE_BLOB_WRITE_TIME,
             &DNS_LOOKUP_TIME,
+            &ENCRYPTION_KEY_LOOKUP_TIME,
             &AI_REQUEST_TIME,
             &AI_INPUT_TOKENS,
             &AI_OUTPUT_TOKENS,
@@ -388,6 +394,7 @@ impl Collector {
             &STORE_BLOB_READ_TIME,
             &STORE_BLOB_WRITE_TIME,
             &DNS_LOOKUP_TIME,
+            &ENCRYPTION_KEY_LOOKUP_TIME,
         ];
         static C_HISTOGRAMS: &[&AtomicHistogram<12>] = &[
             &MESSAGE_DELIVERY_TIME,
@@ -430,6 +437,7 @@ impl Collector {
             MetricType::StoreBlobReadTime => STORE_BLOB_READ_TIME.average(),
             MetricType::StoreBlobWriteTime => STORE_BLOB_WRITE_TIME.average(),
             MetricType::DnsLookupTime => DNS_LOOKUP_TIME.average(),
+            MetricType::EncryptionKeyLookupTime => ENCRYPTION_KEY_LOOKUP_TIME.average(),
             // SPDX-SnippetBegin
             // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
             // SPDX-License-Identifier: LicenseRef-SEL
@@ -527,6 +535,7 @@ impl Collector {
                 CONNECTION_METRICS[CONN_SMTP_OUT].elapsed.observe(value)
             }
             MetricType::DnsLookupTime => DNS_LOOKUP_TIME.observe(value),
+            MetricType::EncryptionKeyLookupTime => ENCRYPTION_KEY_LOOKUP_TIME.observe(value),
             // SPDX-SnippetBegin
             // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
             // SPDX-License-Identifier: LicenseRef-SEL

@@ -19,6 +19,7 @@ use crate::{
     },
 };
 use arc_swap::ArcSwap;
+use blob::BlobConfig;
 use groupware::GroupwareConfig;
 use hyper::HeaderMap;
 use p256::elliptic_curve::sec1::ToSec1Point;
@@ -32,6 +33,7 @@ use rsa::{
 use store::registry::bootstrap::Bootstrap;
 use telemetry::Metrics;
 
+pub mod blob;
 pub mod groupware;
 pub mod inner;
 pub mod mailstore;
@@ -111,6 +113,7 @@ impl Core {
 
         let metadata = MetadataConfig::parse(bp).await;
         let email = EmailConfig::parse(bp).await;
+        let blob = BlobConfig::parse(bp).await;
 
         Box::new(Self {
             // SPDX-SnippetBegin
@@ -132,6 +135,7 @@ impl Core {
             email,
             groupware: GroupwareConfig::parse(bp).await,
             metadata,
+            blob,
             storage,
         })
     }

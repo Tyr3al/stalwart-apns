@@ -11,6 +11,20 @@ are tagged `-rc.<M>` and marked as a GitHub prerelease.
 
 ## [Unreleased]
 
+## [1.1.1-apns.1] - 2026-11-16
+
+### Changed
+- Rebased onto upstream [v1.1.1](https://github.com/stalwartlabs/stalwart/blob/main/CHANGELOG.md) (from v1.0.1), picking up upstream v1.0.2, v1.0.3, v1.1.0 and v1.1.1. No XAPS-specific behavior changed. Upstream's passkeys, Stalwart Keep store, encryption-at-rest objects and permissions, and expanded admin schema are picked up as-is; the XAPS settings, permissions, menu entries and dashboard cards were re-applied to the regenerated v1.1.1 schema. The XAPS Overview cards now use upstream's `items`/`stat` dashboard layout.
+- CI and the Docker images now build both the fork's `xaps` feature and upstream's new `keep` feature.
+- `KV_RATE_LIMIT_XAPS` moved from id 20 to 21: upstream v1.1.1 claimed 20 for `KV_KEY_LOOKUP`. Only transient XAPS test-push rate-limit state uses this key, so no persisted data is affected.
+- Upstream v1.1.0 introduced a plain `keyId` property (for passkeys), which collided with the fork's `XapsKeyId` name. The XAPS `keyId` config field now reuses upstream's `Property::KeyId`, like the existing shared `enable`/`teamId`/`sandbox`/`delay` fields; the `XapsKeyId` variant stays reserved-but-unused. The user-facing field name is unchanged.
+- WebUI: works with `Tyr3al/webui-apns` `2.0.6-apns.1` and later 2.x.
+
+### Upgrading
+- Upstream v1.1.0 introduced `sysPasskey*` permissions for the default roles. After upgrading, either add them manually with the recovery administrator or restart once with `STALWART_UPDATE_ROLE_PERMISSIONS=true`, then remove the variable. See upstream's [default roles on upgraded servers](https://stalw.art/docs/auth/authorization/permissions#default-roles-on-upgraded-servers) note.
+
+## [1.0.1-apns.2] - 2026-10-31
+
 ### Fixed
 - The WebUI never loaded: `Semver::current()` parsed the full crate version `1.0.1-apns.1` and panicked on the `-apns.1` suffix whenever an application bundle declared `minServerVersion` (as `webui-apns` 2.x does), logging "Bundle unpack task panicked" and serving no bundle for `admin` and `account`. The pre-release and build-metadata suffix is now ignored, like `parse_version` already does for bundle versions.
 

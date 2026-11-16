@@ -9,7 +9,8 @@
 // NOTE(xaps-fork): must stay > the highest fork-reserved event id (60204),
 // see docs/xaps-integration.md ("Fork numbering" section). Sizes global per-event level/interest arrays.
 pub const TOTAL_EVENT_COUNT: usize = 60205;
-pub const TOTAL_METRIC_COUNT: usize = 387;
+// Upstream v1.1.1 has 399 metrics; the fork adds 2 XAPS metrics (60300, 60301).
+pub const TOTAL_METRIC_COUNT: usize = 401;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventType {
@@ -31,6 +32,7 @@ pub enum EventType {
     Dkim2(Dkim2Event),
     Dmarc(DmarcEvent),
     Dns(DnsEvent),
+    Encryption(EncryptionEvent),
     Eval(EvalEvent),
     Http(HttpEvent),
     Imap(ImapEvent),
@@ -149,6 +151,7 @@ pub enum CacheEvent {
     SwapMiss = 595,
     SwapWrite = 596,
     SwapError = 597,
+    SwapSkip = 671,
     SwapMetrics = 598,
     SwapFlush = 599,
 }
@@ -278,6 +281,8 @@ pub enum Dkim2Event {
     HashMismatch = 641,
     RecipeError = 642,
     SigningFailed = 650,
+    DsnNotAligned = 666,
+    DsnPropagated = 667,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -300,6 +305,22 @@ pub enum DnsEvent {
     RecordLookupFailed = 11,
     RecordPropagated = 13,
     RecordPropagationTimeout = 14,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u16)]
+pub enum EncryptionEvent {
+    EncryptionSkipped = 655,
+    AtRestEncrypted = 658,
+    GatewayEncrypted = 656,
+    GatewayPlaintext = 657,
+    GatewayBounced = 659,
+    KeyLookup = 660,
+    KeyHarvested = 661,
+    KeyChange = 662,
+    CrlFetchFailed = 663,
+    DnssecBogus = 664,
+    KeyUnusable = 665,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -889,12 +910,14 @@ pub enum StoreEvent {
     ElasticsearchError = 499,
     MeilisearchError = 573,
     RedisError = 511,
+    KeepError = 670,
     S3Error = 513,
     AzureError = 542,
     FilesystemError = 500,
     PoolError = 509,
     DataCorruption = 494,
     DecompressError = 497,
+    DecryptError = 668,
     DeserializeError = 498,
     NotFound = 507,
     NotConfigured = 506,
@@ -914,6 +937,7 @@ pub enum StoreEvent {
     HttpStoreFetch = 475,
     AutoExpunge = 348,
     BlobStorePurged = 353,
+    BlobStoreRecoded = 669,
     DataStorePurged = 352,
 }
 
@@ -1122,6 +1146,8 @@ pub enum MetricType {
     Dkim2HashMismatch = 373,
     Dkim2RecipeError = 374,
     Dkim2SigningFailed = 382,
+    Dkim2DsnNotAligned = 392,
+    Dkim2DsnPropagated = 393,
     DmarcPass = 90,
     DmarcFail = 91,
     DmarcPermError = 92,
@@ -1133,6 +1159,17 @@ pub enum MetricType {
     DnsRecordLookupFailed = 37,
     DnsRecordPropagationTimeout = 38,
     DomainCount = 26,
+    EncryptionKeyLookupTime = 397,
+    EncryptionEncryptionSkipped = 385,
+    EncryptionAtRestEncrypted = 388,
+    EncryptionGatewayEncrypted = 386,
+    EncryptionGatewayPlaintext = 387,
+    EncryptionGatewayBounced = 389,
+    EncryptionKeyLookup = 390,
+    EncryptionKeyHarvested = 391,
+    EncryptionKeyChange = 394,
+    EncryptionCrlFetchFailed = 395,
+    EncryptionDnssecBogus = 396,
     EvalError = 95,
     EvalDirectoryNotFound = 96,
     EvalStoreNotFound = 97,
@@ -1384,6 +1421,7 @@ pub enum MetricType {
     StorePoolError = 296,
     StoreDataCorruption = 297,
     StoreDecompressError = 298,
+    StoreDecryptError = 398,
     StoreDeserializeError = 299,
     StoreNotFound = 300,
     StoreNotConfigured = 301,
@@ -1541,4 +1579,5 @@ pub enum Key {
     #[cfg(feature = "enterprise")]
     Tier = 95,
     // SPDX-SnippetEnd
+    Fingerprint = 96,
 }
