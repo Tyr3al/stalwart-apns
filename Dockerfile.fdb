@@ -29,7 +29,12 @@ RUN \
         arm64|aarch64) FDB_ARCH=aarch64 ;; \
         *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \
     esac && \
-    curl --retry 5 -fLso fdb-client.deb "$(curl --retry 5 -fLs 'https://api.github.com/repos/apple/foundationdb/releases?per_page=100' | jq --arg FDB_ARCH "$FDB_ARCH" --arg RANGE "${FDB_VERSION_RANGE}" -r '[.[] | select(.tag_name | startswith($RANGE + ".")) | . as $rel | ($rel.assets[] | select(.name | test("foundationdb-clients.*" + $FDB_ARCH + ".deb$")) | .browser_download_url) as $url | {tag: $rel.tag_name, url: $url}] | sort_by(.tag | split(".") | map(tonumber)) | reverse | .[0].url')" && \
+    fdb_url="$(curl --retry 5 -fLsS 'https://api.github.com/repos/apple/foundationdb/releases?per_page=100' | jq --arg FDB_ARCH "$FDB_ARCH" --arg RANGE "${FDB_VERSION_RANGE}" -r '[.[] | select(.tag_name | startswith($RANGE + ".")) | . as $rel | ($rel.assets[] | select(.name | test("foundationdb-clients.*" + $FDB_ARCH + ".deb$")) | .browser_download_url) as $url | {tag: $rel.tag_name, url: $url}] | sort_by(.tag | split(".") | map(tonumber)) | reverse | .[0].url')" || fdb_url="" && \
+    if [ -z "$fdb_url" ]; then \
+        echo "FoundationDB release lookup yielded no URL (API unavailable or rate-limited); falling back to the pinned 7.4.9 client package" >&2; \
+        fdb_url="https://github.com/apple/foundationdb/releases/download/7.4.9/foundationdb-clients_7.4.9-1_${FDB_ARCH}.deb"; \
+    fi && \
+    curl --retry 5 -fLso fdb-client.deb "$fdb_url" && \
     mkdir -p /fdb && \
     dpkg -x fdb-client.deb /fdb && \
     mv /fdb/usr/include/foundationdb /usr/include && \
