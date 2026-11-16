@@ -14,18 +14,21 @@ use crate::registry::{
         cluster::{validate_coordinator, validate_in_memory_store},
         dkim::validate_dkim_signature,
         domain::{validate_dns_server, validate_domain},
+        external_public_key::ExternalPublicKeyManagement,
         index_queue::index_queue_status_set,
         map_bootstrap_error,
+        masked_email::validate_masked_email,
         oauth_client::validate_oauth_client_object,
         principal::{
             AccountUpdate, schedule_account_destruction, validate_account, validate_account_access,
             validate_role,
         },
-        public_key::validate_public_key,
+        public_key::PublicKeyManagement,
         queued_message::queued_message_set,
         report::report_set,
         sieve::validate_sieve_script,
         spam_sample::spam_sample_set,
+        symmetric_key::validate_symmetric_key,
         task::task_set,
         tls::{validate_acme_directory, validate_acme_provider, validate_certificate},
     },
@@ -51,7 +54,11 @@ use registry::{
     schema::{
         enums::Permission,
         prelude::{OBJ_FILTER_ACCOUNT, OBJ_SINGLETON, Object, ObjectInner, ObjectType, Property},
-        structs::{Certificate, DkimSignature, DnsServer, Domain, PublicKey, Role, Task},
+        structs::{
+            Account, Certificate, DkimSignature, DnsServer, Domain, ExternalPublicKey, KeySource,
+            PublicKey, Role, SymmetricKey, Task, TaskExternalPublicKeyMaintenance, TaskStatus,
+            UserAccount,
+        },
     },
     types::id::ObjectId,
 };
@@ -72,11 +79,14 @@ use utils::{map::vec_map::VecMap, outbound::OutboundPolicy};
 // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
 // SPDX-License-Identifier: LicenseRef-SEL
 #[cfg(feature = "enterprise")]
-use crate::registry::mapping::principal::{tenant_object_quota, validate_tenant_quota};
+use crate::registry::mapping::{
+    oauth_client::is_superuser,
+    principal::{tenant_object_quota, validate_tenant_quota},
+};
 #[cfg(feature = "enterprise")]
 use registry::schema::{
     prelude::OBJ_FILTER_TENANT,
-    structs::{Permissions, Tenant},
+    structs::{Directory, Permissions, Tenant},
 };
 // SPDX-SnippetEnd
 
@@ -325,31 +335,62 @@ async fn registry_object_set(
         }
         // SPDX-SnippetEnd
         let result = match &mut new_object.inner {
+            ObjectInner::ExternalPublicKey(key) => {
+                let result = server
+                    .validate_external_public_key(key, modification.as_external_public_key())
+                    .await?;
+                if result.is_ok()
+                    && matches!(key.source, KeySource::Automatic(_))
+                    && modification.as_external_public_key().is_none()
+                {
+                    tasks.push(Task::ExternalPublicKeyMaintenance(
+                        TaskExternalPublicKeyMaintenance {
+                            status: TaskStatus::now(),
+                        },
+                    ));
+                }
+                result
+            }
+            ObjectInner::SmimeTrustAnchor(anchor) => server.validate_trust_anchor(anchor).await?,
             ObjectInner::Account(account) => {
-                validate_account(server, access_token, account, modification.as_account()).await?
+                match validate_account(server, access_token, account, modification.as_account())
+                    .await?
+                {
+                    Ok(response) => match account.as_ref() {
+                        Account::User(user)
+                            if modification.as_user_account().is_none_or(|old| {
+                                old.encryption_at_rest != user.encryption_at_rest
+                            }) =>
+                        {
+                            server
+                                .validate_encryption_at_rest(
+                                    modification.id(),
+                                    &user.encryption_at_rest,
+                                )
+                                .await?
+                                .map(|_| response)
+                        }
+                        _ => Ok(response),
+                    },
+                    err => err,
+                }
             }
             ObjectInner::Role(role) => {
                 validate_role(access_token, role, modification.as_role()).await?
             }
-            // SPDX-SnippetBegin
-            // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
-            // SPDX-License-Identifier: LicenseRef-SEL
-            #[cfg(feature = "enterprise")]
             ObjectInner::MaskedEmail(masked_email) => {
-                crate::registry::mapping::masked_email::validate_masked_email(
-                    &set,
-                    masked_email,
-                    is_create,
-                    unpatched_properties,
-                )
-                .await?
+                validate_masked_email(&set, masked_email, is_create, unpatched_properties).await?
             }
-            // SPDX-SnippetEnd
             ObjectInner::PublicKey(key) => {
-                validate_public_key(&set, key, modification.as_public_key()).await?
+                server
+                    .validate_public_key(set.account_id, key, modification.as_public_key())
+                    .await?
             }
             ObjectInner::DkimSignature(key) => {
                 validate_dkim_signature(key, modification.as_dkim_signature()).await?
+            }
+            ObjectInner::SymmetricKey(key) => {
+                validate_symmetric_key(key, modification.as_symmetric_key()).await?
             }
             ObjectInner::Domain(domain) => {
                 validate_domain(
@@ -394,6 +435,15 @@ async fn registry_object_set(
                 }
                 _ => Ok(ObjectResponse::default()),
             },
+            #[cfg(feature = "enterprise")]
+            ObjectInner::Directory(directory)
+                if matches!(directory.as_ref(), Directory::Oidc(oidc) if oidc.trusted_provider)
+                    && !is_superuser(access_token) =>
+            {
+                Err(SetError::invalid_properties()
+                    .with_property(Property::TrustedProvider)
+                    .with_description("Only a superuser can save a trusted directory"))
+            }
             // SPDX-SnippetEnd
             ObjectInner::DnsServer(dns) => {
                 validate_dns_server(&set, dns, modification.as_dns_server(), outbound_policy)
@@ -568,6 +618,7 @@ async fn registry_object_set(
                     Task::AcmeRenewal(task) => task.domain_id = object_id,
                     Task::DkimManagement(task) => task.domain_id = object_id,
                     Task::DnsManagement(task) => task.domain_id = object_id,
+                    Task::ExternalPublicKeyMaintenance(_) => {}
                     _ => unreachable!(),
                 }
                 schedule_replacing(set.server, &mut batch, task).await?;
@@ -576,18 +627,11 @@ async fn registry_object_set(
         }
     }
 
-    // SPDX-SnippetBegin
-    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
-    // SPDX-License-Identifier: LicenseRef-SEL
-    #[cfg(feature = "enterprise")]
     const ACCOUNT_ORPHAN_TYPES: &[ObjectType] = &[
         ObjectType::PublicKey,
         ObjectType::MaskedEmail,
         ObjectType::OAuthGrant,
     ];
-    // SPDX-SnippetEnd
-    #[cfg(not(feature = "enterprise"))]
-    const ACCOUNT_ORPHAN_TYPES: &[ObjectType] = &[ObjectType::PublicKey, ObjectType::OAuthGrant];
 
     // Process destroy
     for id in set.destroy.drain(..) {
@@ -784,6 +828,7 @@ impl RegistrySet for Server {
             | ObjectType::DmarcReportSettings
             | ObjectType::DnsResolver
             | ObjectType::Email
+            | ObjectType::Encryption
             | ObjectType::FileStorage
             | ObjectType::Http
             | ObjectType::HttpForm
@@ -828,6 +873,9 @@ impl RegistrySet for Server {
             | ObjectType::Application
             | ObjectType::BlockedIp
             | ObjectType::Certificate
+            | ObjectType::ExternalPublicKey
+            | ObjectType::SmimeTrustAnchor
+            | ObjectType::SymmetricKey
             | ObjectType::Directory
             | ObjectType::DnsServer
             | ObjectType::EventTracingLevel
@@ -861,7 +909,8 @@ impl RegistrySet for Server {
             | ObjectType::OAuthClient
             | ObjectType::OAuthGrant
             | ObjectType::Role
-            | ObjectType::Domain => registry_object_set(set).await,
+            | ObjectType::Domain
+            | ObjectType::MaskedEmail => registry_object_set(set).await,
             // SPDX-SnippetBegin
             // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
             // SPDX-License-Identifier: LicenseRef-SEL
@@ -872,8 +921,7 @@ impl RegistrySet for Server {
             | ObjectType::MetricsStore
             | ObjectType::SpamAi
             | ObjectType::TracingStore
-            | ObjectType::Tenant
-            | ObjectType::MaskedEmail => registry_object_set(set).await,
+            | ObjectType::Tenant => registry_object_set(set).await,
             // SPDX-SnippetEnd
             ObjectType::ArfExternalReport
             | ObjectType::DmarcExternalReport
@@ -896,7 +944,8 @@ impl RegistrySet for Server {
             ObjectType::AccountSettings
             | ObjectType::ApiKey
             | ObjectType::AccountPassword
-            | ObjectType::AppPassword => account_set(set).await.map(|set| set.into_response()),
+            | ObjectType::AppPassword
+            | ObjectType::Passkey => account_set(set).await.map(|set| set.into_response()),
 
             ObjectType::QueuedMessage => {
                 queued_message_set(set).await.map(|set| set.into_response())
@@ -1001,6 +1050,26 @@ impl Modification {
         }
     }
 
+    fn id(&self) -> Option<Id> {
+        match self {
+            Modification::Create { .. } => None,
+            Modification::Update { id, .. } => Some(*id),
+        }
+    }
+
+    fn as_user_account(&self) -> Option<&UserAccount> {
+        match self {
+            Modification::Create { .. } => None,
+            Modification::Update { object, .. } => match &object.inner {
+                ObjectInner::Account(account) => match account.as_ref() {
+                    Account::User(account) => Some(account),
+                    Account::Group(_) => None,
+                },
+                _ => None,
+            },
+        }
+    }
+
     fn as_role(&self) -> Option<&Role> {
         match self {
             Modification::Create { .. } => None,
@@ -1011,11 +1080,31 @@ impl Modification {
         }
     }
 
-    fn as_public_key(&self) -> Option<&PublicKey> {
+    fn as_external_public_key(&self) -> Option<(Id, &ExternalPublicKey)> {
+        match self {
+            Modification::Create { .. } => None,
+            Modification::Update { id, object } => match &object.inner {
+                ObjectInner::ExternalPublicKey(key) => Some((*id, key)),
+                _ => None,
+            },
+        }
+    }
+
+    fn as_public_key(&self) -> Option<(Id, &PublicKey)> {
+        match self {
+            Modification::Create { .. } => None,
+            Modification::Update { id, object } => match &object.inner {
+                ObjectInner::PublicKey(key) => Some((*id, key)),
+                _ => None,
+            },
+        }
+    }
+
+    fn as_symmetric_key(&self) -> Option<&SymmetricKey> {
         match self {
             Modification::Create { .. } => None,
             Modification::Update { object, .. } => match &object.inner {
-                ObjectInner::PublicKey(key) => Some(key),
+                ObjectInner::SymmetricKey(key) => Some(key),
                 _ => None,
             },
         }

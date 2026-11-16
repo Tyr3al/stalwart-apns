@@ -27,24 +27,25 @@ pub mod bootstrap;
 pub mod cluster;
 pub mod dkim;
 pub mod domain;
+pub mod external_public_key;
 pub mod index_queue;
 pub mod log;
+pub mod masked_email;
 pub mod oauth_client;
+pub mod passkey;
 pub mod principal;
 pub mod public_key;
 pub mod queued_message;
 pub mod report;
 pub mod sieve;
 pub mod spam_sample;
+pub mod symmetric_key;
 pub mod task;
 pub mod tls;
 
 // SPDX-SnippetBegin
 // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
 // SPDX-License-Identifier: LicenseRef-SEL
-#[cfg(feature = "enterprise")]
-pub mod masked_email;
-
 #[cfg(feature = "enterprise")]
 pub mod archived_item;
 

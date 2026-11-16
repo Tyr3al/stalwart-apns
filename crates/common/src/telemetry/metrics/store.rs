@@ -86,6 +86,17 @@ persisted_metrics!(
         SmtpDkim2Fail,
         SmtpDmarcPass,
         SmtpDmarcFail,
+        EncryptionAtRestEncrypted,
+        EncryptionEncryptionSkipped,
+        EncryptionGatewayEncrypted,
+        EncryptionGatewayPlaintext,
+        EncryptionGatewayBounced,
+        EncryptionKeyLookup,
+        EncryptionKeyHarvested,
+        EncryptionKeyChange,
+        EncryptionCrlFetchFailed,
+        EncryptionDnssecBogus,
+        // NOTE(xaps-fork): XAPS metric added by the fork (60300), see docs/xaps-integration.md.
         XapsSuccess,
     ]
 );
@@ -116,6 +127,7 @@ persisted_metrics!(
         DeliveryTotalTime,
         DeliveryAttemptTime,
         DnsLookupTime,
+        EncryptionKeyLookupTime,
         StoreDataReadTime,
         StoreDataWriteTime,
         StoreBlobReadTime,

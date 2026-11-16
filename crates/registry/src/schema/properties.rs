@@ -61,6 +61,7 @@ pub enum ObjectInner {
     Domain(Box<Domain>),
     DsnReportSettings(Box<DsnReportSettings>),
     Email(Box<Email>),
+    Encryption(Box<Encryption>),
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
@@ -68,6 +69,7 @@ pub enum ObjectInner {
     Enterprise(Box<Enterprise>),
     // SPDX-SnippetEnd
     EventTracingLevel(Box<EventTracingLevel>),
+    ExternalPublicKey(Box<ExternalPublicKey>),
     FileStorage(Box<FileStorage>),
     Http(Box<Http>),
     HttpForm(Box<HttpForm>),
@@ -78,12 +80,7 @@ pub enum ObjectInner {
     Jmap(Box<Jmap>),
     Log(Box<Log>),
     MailingList(Box<MailingList>),
-    // SPDX-SnippetBegin
-    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
-    // SPDX-License-Identifier: LicenseRef-SEL
-    #[cfg(feature = "enterprise")]
     MaskedEmail(Box<MaskedEmail>),
-    // SPDX-SnippetEnd
     MemoryLookupKey(Box<MemoryLookupKey>),
     MemoryLookupKeyValue(Box<MemoryLookupKeyValue>),
     Metadata(Box<Metadata>),
@@ -124,6 +121,7 @@ pub enum ObjectInner {
     OAuthClient(Box<OAuthClient>),
     OAuthGrant(Box<OAuthGrant>),
     OidcProvider(Box<OidcProvider>),
+    Passkey(Box<Passkey>),
     PublicKey(Box<PublicKey>),
     QueuedMessage(Box<QueuedMessage>),
     ReportSettings(Box<ReportSettings>),
@@ -137,6 +135,7 @@ pub enum ObjectInner {
     SieveSystemScript(Box<SieveSystemScript>),
     SieveUserInterpreter(Box<SieveUserInterpreter>),
     SieveUserScript(Box<SieveUserScript>),
+    SmimeTrustAnchor(Box<SmimeTrustAnchor>),
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
@@ -154,6 +153,7 @@ pub enum ObjectInner {
     SpamTrainingSample(Box<SpamTrainingSample>),
     SpfReportSettings(Box<SpfReportSettings>),
     StoreLookup(Box<StoreLookup>),
+    SymmetricKey(Box<SymmetricKey>),
     SystemSettings(Box<SystemSettings>),
     Task(Box<Task>),
     TaskManager(Box<TaskManager>),
@@ -238,6 +238,7 @@ pub enum ObjectType {
     Domain = 37,
     DsnReportSettings = 38,
     Email = 39,
+    Encryption = 120,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
@@ -245,6 +246,7 @@ pub enum ObjectType {
     Enterprise = 40,
     // SPDX-SnippetEnd
     EventTracingLevel = 41,
+    ExternalPublicKey = 121,
     FileStorage = 42,
     Http = 43,
     HttpForm = 44,
@@ -255,12 +257,7 @@ pub enum ObjectType {
     Jmap = 49,
     Log = 50,
     MailingList = 51,
-    // SPDX-SnippetBegin
-    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
-    // SPDX-License-Identifier: LicenseRef-SEL
-    #[cfg(feature = "enterprise")]
     MaskedEmail = 52,
-    // SPDX-SnippetEnd
     MemoryLookupKey = 53,
     MemoryLookupKeyValue = 54,
     Metadata = 55,
@@ -301,6 +298,7 @@ pub enum ObjectType {
     OAuthClient = 80,
     OAuthGrant = 81,
     OidcProvider = 82,
+    Passkey = 124,
     PublicKey = 83,
     QueuedMessage = 84,
     ReportSettings = 85,
@@ -314,6 +312,7 @@ pub enum ObjectType {
     SieveSystemScript = 93,
     SieveUserInterpreter = 94,
     SieveUserScript = 95,
+    SmimeTrustAnchor = 122,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
@@ -331,6 +330,7 @@ pub enum ObjectType {
     SpamTrainingSample = 105,
     SpfReportSettings = 106,
     StoreLookup = 107,
+    SymmetricKey = 123,
     SystemSettings = 108,
     Task = 109,
     TaskManager = 110,
@@ -417,6 +417,7 @@ pub enum Property {
     // SPDX-SnippetEnd
     AlarmId = 938,
     AlertAfter = 957,
+    Algorithm = 1064,
     Algorithms = 265,
     Aliases = 411,
     AllowCount = 903,
@@ -462,8 +463,11 @@ pub enum Property {
     // SPDX-SnippetEnd
     ArrivalDate = 82,
     AsnUrls = 116,
+    AtRestEnable = 1017,
     AttemptNumber = 971,
+    AttemptTimeout = 1072,
     Attempts = 348,
+    AttestationObject = 1066,
     AttrClass = 559,
     AttrDescription = 560,
     AttrEmail = 561,
@@ -481,6 +485,7 @@ pub enum Property {
     AuthSecret = 597,
     AuthUsername = 598,
     AuthenticatedAs = 882,
+    AuthenticatedEncryption = 1034,
     AuthenticatedTimeout = 507,
     AuthenticationResults = 83,
     AutoAddInvitations = 209,
@@ -494,10 +499,12 @@ pub enum Property {
     BindDn = 553,
     BindSecret = 554,
     BlobCleanupSchedule = 238,
+    BlobEncryptionKey = 1057,
     BlobId = 74,
     BlobSize = 763,
     BlobStore = 153,
     BlockCount = 901,
+    BlockedFingerprints = 1052,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
@@ -519,9 +526,11 @@ pub enum Property {
     // SPDX-SnippetEnd
     BufferSize = 764,
     Buffered = 1004,
+    CaPath = 1073,
     CaaIdentities = 19,
     CacheSize = 766,
     Canonicalization = 254,
+    Capabilities = 1039,
     CatchAllAddress = 417,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
@@ -529,16 +538,19 @@ pub enum Property {
     #[cfg(feature = "enterprise")]
     Categories = 843,
     // SPDX-SnippetEnd
+    CertPath = 1074,
     Certificate = 214,
     CertificateManagement = 413,
     ChallengeType = 10,
     ChunkSize = 756,
     Chunking = 614,
+    Cipher = 1058,
     ClaimGroups = 709,
     ClaimName = 708,
     ClaimUsername = 706,
     Cleartext = 807,
     ClientCapacity = 677,
+    ClientDataJson = 1065,
     ClientHash = 1012,
     ClientId = 132,
     ClientIp = 391,
@@ -548,6 +560,7 @@ pub enum Property {
     ClientName = 700,
     ClientSecret = 133,
     ClientToken = 377,
+    ClusterDiscovery = 1068,
     ClusterFile = 458,
     ColumnClass = 921,
     ColumnDescription = 922,
@@ -556,12 +569,14 @@ pub enum Property {
     CommandTimeout = 631,
     Comment = 280,
     CompartmentOcid = 398,
+    Compression = 1059,
     CompressionAlgorithm = 431,
     Condition = 48,
     Config = 1011,
     ConfigName = 367,
     ConnectTimeout = 602,
     Connection = 634,
+    Connections = 1069,
     ConsumerKey = 401,
     Contact = 11,
     ContactInfo = 986,
@@ -573,12 +588,7 @@ pub enum Property {
     Count = 301,
     Create = 444,
     CreatedAt = 60,
-    // SPDX-SnippetBegin
-    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
-    // SPDX-License-Identifier: LicenseRef-SEL
-    #[cfg(feature = "enterprise")]
     CreatedBy = 575,
-    // SPDX-SnippetEnd
     CredentialId = 730,
     Credentials = 385,
     CurrentSecret = 4,
@@ -594,12 +604,7 @@ pub enum Property {
     DateRangeEnd = 286,
     DateRangeStart = 285,
     Day = 230,
-    // SPDX-SnippetBegin
-    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
-    // SPDX-License-Identifier: LicenseRef-SEL
-    #[cfg(feature = "enterprise")]
     Deadline = 860,
-    // SPDX-SnippetEnd
     DefaultAdminRoleIds = 123,
     DefaultCertificateId = 929,
     DefaultDisplayName = 24,
@@ -643,6 +648,7 @@ pub enum Property {
     DisableCapabilities = 823,
     DisabledPermissions = 732,
     DiscardAfter = 1010,
+    DiscoveryProxy = 1026,
     Disposition = 890,
     Dkim2Pass = 336,
     Dkim2Result = 335,
@@ -702,15 +708,13 @@ pub enum Property {
     // SPDX-License-Identifier: LicenseRef-SEL
     #[cfg(feature = "enterprise")]
     EmailAlert = 49,
-    #[cfg(feature = "enterprise")]
-    EmailDomain = 577,
     // SPDX-SnippetEnd
+    EmailDomain = 577,
     EmailLimit = 893,
+    EmailPrefix = 576,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
-    #[cfg(feature = "enterprise")]
-    EmailPrefix = 576,
     #[cfg(feature = "enterprise")]
     EmailTemplate = 212,
     // SPDX-SnippetEnd
@@ -724,6 +728,7 @@ pub enum Property {
     EnabledPermissions = 731,
     EncryptAtRest = 430,
     EncryptOnAppend = 429,
+    Encryption = 1060,
     EncryptionAtRest = 9,
     EncryptionKey = 724,
     EnvId = 740,
@@ -791,6 +796,7 @@ pub enum Property {
     #[cfg(feature = "enterprise")]
     ExternalId = 472,
     // SPDX-SnippetEnd
+    ExternalPublicKeys = 1016,
     ExtraContactInfo = 283,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
@@ -824,26 +830,29 @@ pub enum Property {
     FilterMemberOf = 558,
     FilterRecipient = 557,
     Fingerprint = 395,
+    Fingerprints = 1055,
     FirstFailedAt = 972,
     FirstParty = 697,
+    FirstSeen = 1043,
     Flags = 263,
     FlagsAction = 632,
     FlagsProtocol = 633,
     FlushChanges = 144,
     FlushInterval = 145,
     FolderId = 410,
-    // SPDX-SnippetBegin
-    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
-    // SPDX-License-Identifier: LicenseRef-SEL
-    #[cfg(feature = "enterprise")]
     ForDomain = 574,
-    // SPDX-SnippetEnd
     Format = 493,
     ForwardedHops = 480,
     From = 76,
     FromAddress = 53,
     FromName = 54,
     FutureRelease = 618,
+    GatewayEnable = 1018,
+    GatewayEncryptSigned = 1023,
+    GatewayHeaderProtection = 1022,
+    GatewayMethods = 1021,
+    GatewayMinTrust = 1020,
+    GatewayOutbound = 1019,
     GenerateDkimKeys = 151,
     Generation = 703,
     Generator = 298,
@@ -855,8 +864,11 @@ pub enum Property {
     GroupId = 548,
     GroupwareLarge = 175,
     GroupwareLargeTtl = 176,
+    HarvestKeys = 1024,
     HeaderFrom = 308,
+    HeaderProtection = 1032,
     Headers = 107,
+    HkpServers = 1025,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
@@ -980,17 +992,24 @@ pub enum Property {
     KeepAlive = 46,
     // SPDX-SnippetEnd
     Key = 375,
+    KeyId = 1061,
     KeyName = 406,
+    KeyPath = 1075,
     KeyPrefix = 141,
+    KeyRefreshInterval = 1028,
+    KeyType = 1038,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
     #[cfg(feature = "enterprise")]
     KeyValues = 994,
     // SPDX-SnippetEnd
+    Kind = 1037,
     L1Ratio = 467,
     L2Ratio = 468,
+    LastChecked = 1045,
     LastRenewal = 224,
+    LastSeen = 1044,
     LastUsedAt = 702,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
@@ -1070,6 +1089,7 @@ pub enum Property {
     MaxConnections = 694,
     MaxContacts = 28,
     MaxCpuCycles = 815,
+    MaxCrlSize = 1031,
     MaxDelay = 964,
     MaxDepth = 585,
     MaxDuration = 627,
@@ -1119,12 +1139,7 @@ pub enum Property {
     MaxMailboxNameLength = 428,
     MaxMailboxes = 436,
     MaxMailboxesPerEmail = 439,
-    // SPDX-SnippetBegin
-    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
-    // SPDX-License-Identifier: LicenseRef-SEL
-    #[cfg(feature = "enterprise")]
     MaxMaskedAddresses = 437,
-    // SPDX-SnippetEnd
     MaxMatchVars = 829,
     MaxMediaSize = 31,
     MaxMessageSize = 426,
@@ -1147,6 +1162,7 @@ pub enum Property {
     MaxOutputTokens = 32,
     // SPDX-SnippetEnd
     MaxParticipantIdentities = 196,
+    MaxPasskeys = 1062,
     MaxPasswordLength = 126,
     MaxPolls = 578,
     MaxPrivateSize = 586,
@@ -1197,6 +1213,7 @@ pub enum Property {
     Messages = 172,
     MessagesLarge = 173,
     MessagesLargeTtl = 174,
+    Method = 1053,
     // SPDX-SnippetBegin
     // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
     // SPDX-License-Identifier: LicenseRef-SEL
@@ -1242,7 +1259,14 @@ pub enum Property {
     MxHosts = 663,
     Name = 36,
     Namespace = 492,
+    NegativeCacheTtl = 1029,
     NegativeTtl = 187,
+    NextCapabilities = 1050,
+    NextCheckAt = 1046,
+    NextExpiresAt = 1051,
+    NextFingerprint = 1049,
+    NextKey = 1047,
+    NextKeyType = 1048,
     NextNotify = 736,
     NextRetry = 517,
     NextTransitionAt = 261,
@@ -1259,6 +1283,7 @@ pub enum Property {
     NumReplicas = 422,
     NumShards = 423,
     OauthClientId = 68,
+    OauthScopes = 1015,
     ObjectType = 967,
     OnSuccessRenewCertificate = 955,
     OpaqueTokenValidation = 711,
@@ -1292,6 +1317,7 @@ pub enum Property {
     Period = 748,
     Permissions = 62,
     PingInterval = 676,
+    Pinned = 1033,
     Pipelining = 621,
     Policies = 987,
     PolicyAdkim = 290,
@@ -1400,6 +1426,7 @@ pub enum Property {
     RefreshInterval = 114,
     RefreshTokenExpiry = 720,
     Region = 356,
+    Registration = 1063,
     RejectNonFqdn = 658,
     RemoteIp = 324,
     RenewBefore = 20,
@@ -1422,6 +1449,7 @@ pub enum Property {
     ResponseHeaders = 478,
     ResponseHostname = 249,
     ResponseMessage = 252,
+    ResponseTimeout = 1067,
     Result = 273,
     ResultType = 974,
     Retention = 143,
@@ -1472,6 +1500,8 @@ pub enum Property {
     SentinelUsername = 754,
     Separator = 111,
     ServerId = 403,
+    ServerKeysPath = 1077,
+    ServerName = 1076,
     Servers = 352,
     ServiceAccountJson = 380,
     ServiceName = 753,
@@ -1479,6 +1509,7 @@ pub enum Property {
     Services = 933,
     SessionTimeout = 550,
     SessionToken = 357,
+    ShardConnections = 1070,
     ShardIndex = 973,
     SharedSecret = 388,
     // SPDX-SnippetBegin
@@ -1493,6 +1524,9 @@ pub enum Property {
     SkipAudienceValidation = 716,
     SkipDeploy = 369,
     SkipFirst = 500,
+    SmimeCiphers = 1040,
+    SmimeOaep = 1041,
+    SmimeSignedAt = 1042,
     SmtpGreeting = 647,
     SocketBacklog = 683,
     SocketNoDelay = 684,
@@ -1502,8 +1536,10 @@ pub enum Property {
     SocketSendBufferSize = 688,
     SocketTosV4 = 689,
     SocketTtl = 690,
+    Source = 1035,
     SourceIp = 91,
     SourcePort = 92,
+    SourceTimeout = 1027,
     SpamFilterRulesUrl = 910,
     SpamLookup = 166,
     SpfDns = 104,
@@ -1533,6 +1569,8 @@ pub enum Property {
     Stores = 808,
     // SPDX-SnippetEnd
     Strategy = 956,
+    StreamMode = 1071,
+    StrictKeyWrapEncoding = 1054,
     SubAddressing = 418,
     SubAuthId = 371,
     Subject = 55,
@@ -1617,8 +1655,15 @@ pub enum Property {
     #[cfg(feature = "enterprise")]
     TrimQuotes = 856,
     // SPDX-SnippetEnd
+    Trust = 1036,
     TrustContacts = 904,
     TrustReplies = 909,
+    // SPDX-SnippetBegin
+    // SPDX-FileCopyrightText: 2020 Stalwart Labs LLC <hello@stalw.art>
+    // SPDX-License-Identifier: LicenseRef-SEL
+    #[cfg(feature = "enterprise")]
+    TrustedProvider = 1056,
+    // SPDX-SnippetEnd
     TsigAlgorithm = 407,
     Ttl = 359,
     // SPDX-SnippetBegin
@@ -1642,6 +1687,7 @@ pub enum Property {
     UrlLimit = 895,
     UrlPrefix = 65,
     Urls = 749,
+    UseBundledRoots = 1030,
     UsePermissiveCors = 477,
     UseTls = 353,
     UsedDiskQuota = 471,

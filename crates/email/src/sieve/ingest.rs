@@ -594,7 +594,7 @@ impl SieveScriptIngest for Server {
         );
         ctx.set_user_address(mail_from);
         ctx.set_envelope(Envelope::From, envelope_from);
-        ctx.set_envelope(Envelope::To, envelope_to.address.as_str());
+        ctx.set_envelope(Envelope::To, envelope_to.envelope_to());
         if let Some(orcpt) = envelope_to.orcpt_parameter() {
             ctx.set_envelope(Envelope::Orcpt, orcpt);
         }
@@ -824,7 +824,7 @@ impl SieveScriptIngest for Server {
                     .email_ingest(IngestEmail {
                         raw_message: &sieve_message.raw_message,
                         blob_hash,
-                        message: message.into(),
+                        message: Some(&message),
                         access_token,
                         mailbox_ids: sieve_message.file_into,
                         keywords: sieve_message.flags,
@@ -981,7 +981,6 @@ impl SieveScriptIngest for Server {
         script_object: &ArchivedSieveScript,
     ) -> trc::Result<ActiveScript> {
         let script_bytes = self
-            .blob_store()
             .get_blob(script_object.blob_hash.0.as_ref(), 0..usize::MAX)
             .await
             .caused_by(trc::location!())?

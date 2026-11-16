@@ -12,6 +12,7 @@ use crate::{
     DavError, DavErrorCondition, DavMethod,
     calendar::ItipPrecondition,
     common::{
+        create::CreateLockHandler,
         lock::{LockRequestHandler, ResourceState},
         uri::DavUriResource,
     },
@@ -49,8 +50,11 @@ use groupware::{
         user::{ICalendarUserData, UpdatedPolicy, UserDataSplit, UserDataUpdate, UserDataView},
     },
     scheduling::{
-        ItipMessages, event_create::itip_create, event_update::itip_update,
-        itip::itip_set_unreachable_status, recipient::RecipientPolicy,
+        ItipMessages,
+        event_create::{itip_create, itip_unscheduled_update},
+        event_update::itip_update,
+        itip::itip_set_unreachable_status,
+        recipient::RecipientPolicy,
     },
 };
 use http_proto::HttpResponse;
@@ -439,22 +443,24 @@ impl CalendarUpdateRequestHandler for Server {
             };
             if itip_status.is_send() {
                 let policy = RecipientPolicy::new(&self.core.groupware, new_event.flags);
-                let result = if let Some(old_ical) = old_ical
-                    .as_ref()
-                    .filter(|_| new_event.schedule_tag.is_some())
-                {
-                    itip_update(
+                let result = match (&old_ical, new_event.schedule_tag) {
+                    (Some(old_ical), Some(_)) => itip_update(
                         &mut new_content.data.event,
                         old_ical,
                         account_info.addresses(),
                         policy,
-                    )
-                } else {
-                    itip_create(
+                    ),
+                    (Some(old_ical), None) => itip_unscheduled_update(
+                        &mut new_content.data.event,
+                        old_ical,
+                        account_info.addresses(),
+                        policy,
+                    ),
+                    (None, _) => itip_create(
                         &mut new_content.data.event,
                         account_info.addresses(),
                         policy,
-                    )
+                    ),
                 };
 
                 match result {
@@ -469,13 +475,10 @@ impl CalendarUpdateRequestHandler for Server {
                             .sum::<usize>()
                             < self.core.groupware.itip_outbound_max_recipients
                         {
-                            // Only update schedule tag if the user is the organizer
-                            if is_organizer {
-                                if let Some(schedule_tag) = &mut new_event.schedule_tag {
-                                    *schedule_tag += 1;
-                                } else {
-                                    new_event.schedule_tag = Some(1);
-                                }
+                            match &mut new_event.schedule_tag {
+                                Some(schedule_tag) if is_organizer => *schedule_tag += 1,
+                                Some(_) => {}
+                                None => new_event.schedule_tag = Some(1),
                             }
 
                             itip_messages = Some(ItipMessages::new(messages));
@@ -846,7 +849,18 @@ impl CalendarUpdateRequestHandler for Server {
                     .queue(&mut batch)
                     .caused_by(trc::location!())?;
             }
-            self.commit_batch(batch).await.caused_by(trc::location!())?;
+            let lock = self
+                .lock_create(
+                    access_token,
+                    account_id,
+                    SyncCollection::Calendar,
+                    resource_name,
+                    headers,
+                )
+                .await?;
+            self.commit_create(lock, batch)
+                .await
+                .caused_by(trc::location!())?;
 
             Ok(HttpResponse::new(StatusCode::CREATED)
                 .with_etag_opt(serves_submitted_ical.then_some(etag))

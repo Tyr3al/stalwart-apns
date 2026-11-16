@@ -53,7 +53,7 @@ COPY Cargo.toml .
 COPY Cargo.lock .
 COPY crates/ crates/
 COPY resources/ resources/
-RUN cargo build -p stalwart --no-default-features --features "foundationdb s3 redis nats enterprise xaps" --release
+RUN cargo build -p stalwart --no-default-features --features "foundationdb s3 redis keep azure nats enterprise xaps" --release
 
 FROM debian:trixie-slim AS runtime
 
