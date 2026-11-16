@@ -121,7 +121,7 @@ RUN \
     if [ ! -z "${FDB_ARCH}" ]; then \
         auth=() && \
         if [ -n "${GITHUB_TOKEN}" ]; then auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}"); fi && \
-        fdb_url="$(curl --retry 5 -fLs "${auth[@]}" 'https://api.github.com/repos/apple/foundationdb/releases?per_page=100' | jq --arg FDB_ARCH "$FDB_ARCH" --arg RANGE "${FDB_VERSION_RANGE}" -r '[.[] | select(.tag_name | startswith($RANGE + "."))] | sort_by(.tag_name | split(".") | map(tonumber)) | reverse | .[0].assets[] | select(.name | test("foundationdb-clients.*" + $FDB_ARCH + ".deb$")) | .browser_download_url')" && \
+        fdb_url="$(curl --retry 5 -fLs "${auth[@]}" 'https://api.github.com/repos/apple/foundationdb/releases?per_page=100' | jq --arg FDB_ARCH "$FDB_ARCH" --arg RANGE "${FDB_VERSION_RANGE}" -r '[.[] | select(.tag_name | startswith($RANGE + ".")) | . as $rel | ($rel.assets[] | select(.name | test("foundationdb-clients.*" + $FDB_ARCH + ".deb$")) | .browser_download_url) as $url | {tag: $rel.tag_name, url: $url}] | sort_by(.tag | split(".") | map(tonumber)) | reverse | .[0].url')" && \
         [ -n "${fdb_url}" ] && \
         curl --retry 5 -fLso fdb-client.deb "${fdb_url}" && \
         mkdir -p /fdb && \

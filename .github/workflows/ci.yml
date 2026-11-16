@@ -371,7 +371,7 @@ jobs:
       #  run: |
       #    rustup target add ${{matrix.target}}
       #    # Pin FoundationDB 7.4.x (Apple publishes these as prereleases)
-      #    curl --retry 5 -Lso foundationdb.pkg "$(gh api -X GET /repos/apple/foundationdb/releases --jq '[.[] | select(.tag_name | startswith("7.4."))] | sort_by(.tag_name | split(".") | map(tonumber)) | reverse | .[0].assets[] | select(.name | test("${{startsWith(matrix.target, 'x86') && 'x86_64' || 'arm64'}}" + ".pkg$")) | .browser_download_url')"
+      #    curl --retry 5 -Lso foundationdb.pkg "$(gh api -X GET /repos/apple/foundationdb/releases --jq '[.[] | select(.tag_name | startswith("7.4.")) | . as $rel | ($rel.assets[] | select(.name | test("${{startsWith(matrix.target, 'x86') && 'x86_64' || 'arm64'}}" + ".pkg$")) | .browser_download_url) as $url | {tag: $rel.tag_name, url: $url}] | sort_by(.tag | split(".") | map(tonumber)) | reverse | .[0].url')"
       #    echo "=== Package contents ==="
       #    pkgutil --payload-files foundationdb.pkg || true
       #    sudo installer -allowUntrusted -verbose -dumplog -pkg foundationdb.pkg -target /
