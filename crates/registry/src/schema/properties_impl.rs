@@ -1744,7 +1744,6 @@ impl EnumImpl for Property {
             // since a duplicate string key here isn't possible and the client sends the plain
             // field names, not "xaps"-prefixed ones.
             b"keyFileP8" => Property::XapsKeyFileP8,
-            b"keyId" => Property::XapsKeyId,
             b"topic" => Property::XapsTopic,
             b"checkInterval" => Property::XapsCheckInterval,
             b"certificateFilePem" => Property::XapsCertificateFilePem,
@@ -2776,7 +2775,6 @@ impl EnumImpl for Property {
             // since a duplicate string key here isn't possible and the client sends the plain
             // field names, not "xaps"-prefixed ones.
             b"keyFileP8" => Property::XapsKeyFileP8,
-            b"keyId" => Property::XapsKeyId,
             b"topic" => Property::XapsTopic,
             b"checkInterval" => Property::XapsCheckInterval,
             b"certificateFilePem" => Property::XapsCertificateFilePem,
@@ -4163,7 +4161,7 @@ impl EnumImpl for Property {
             Property::XapsTeamId => "xapsTeamId",
             Property::XapsDelay => "xapsDelay",
             Property::XapsKeyFileP8 => "keyFileP8",
-            Property::XapsKeyId => "keyId",
+            Property::XapsKeyId => "xapsKeyId",
             Property::XapsTopic => "topic",
             Property::XapsCheckInterval => "checkInterval",
             Property::XapsCertificateFilePem => "certificateFilePem",

@@ -78689,7 +78689,7 @@ impl IntoValue for Xaps {
             Property::XapsKeyFileP8,
             self.key_file_p8.into_value_with(opts),
         );
-        map.insert_unchecked(Property::XapsKeyId, self.key_id.into_value_with(opts));
+        map.insert_unchecked(Property::KeyId, self.key_id.into_value_with(opts));
         map.insert_unchecked(Property::TeamId, self.team_id.into_value_with(opts));
         map.insert_unchecked(Property::Sandbox, self.sandbox.into_value_with(opts));
         map.insert_unchecked(Property::Delay, self.delay.into_value_with(opts));
@@ -78733,7 +78733,7 @@ impl RegistryJsonPropertyPatch for Xaps {
             Some(Property::Delay) => self.delay.patch(pointer, value),
             Some(Property::XapsTopic) => self.topic.patch(pointer, value),
             Some(Property::XapsKeyFileP8) => self.key_file_p8.patch(pointer, value),
-            Some(Property::XapsKeyId) => self.key_id.patch(pointer, value),
+            Some(Property::KeyId) => self.key_id.patch(pointer, value),
             Some(Property::XapsCheckInterval) => self.check_interval.patch(pointer, value),
             Some(Property::XapsCertificateFilePem) => {
                 self.certificate_file_pem.patch(pointer, value)

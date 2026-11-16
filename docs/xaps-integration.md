@@ -143,6 +143,17 @@ none of these blocks are close to overflowing, and there's room for another such
 addition needs one — pick an unused thousand-block and add a row above. `PrincipalField` is the
 exception: it's `#[repr(u8)]`, so its reserved block is sized in the tens, not thousands (see row above).
 
+### Name collisions with upstream properties
+
+Reserved *numeric* ids are only half of the story: the property-name maps in
+`crates/registry/src/schema/properties_impl.rs` also have to stay unique. Upstream v1.1.0 added a
+plain `keyId` property (used by passkeys), which collided with the fork's `Property::XapsKeyId`
+name. Following the same pattern already used for `enable`/`teamId`/`sandbox`/`delay`, the XAPS
+`keyId` field now reuses upstream's `Property::KeyId` in the name maps and in
+`Xaps::patch_property`; the dedicated `XapsKeyId = 60102` variant stays reserved (mapped to
+`xapsKeyId` in the reverse map) but is unused, so the user-facing config field name `keyId` did
+not have to change.
+
 ### Why the ranges differ in size
 
 `Permission::COUNT` directly sizes a bitset that's instantiated per role / access token
